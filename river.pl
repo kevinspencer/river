@@ -112,14 +112,27 @@ sub normalize_item {
 
     my $title = $f->{title} // '';
     decode_entities($title);
+    $title = clean_text($title);
+
+    my $summary = truncate_text(strip_html($f->{summary} // ''), $SUMMARY_LEN);
+
+    if ($title eq '') {
+        if ($summary ne '') {
+            $title   = truncate_text($summary, 120);
+            $summary = '';
+        }
+        else {
+            $title = '(untitled)';
+        }
+    }
 
     return {
         service       => $src->{label} // $src->{name},
         service_class => $class,
-        title         => clean_text($title),
+        title         => $title,
         url           => $f->{url} // '',
         ts            => $f->{ts} + 0,
-        summary       => truncate_text(strip_html($f->{summary} // ''), $SUMMARY_LEN),
+        summary       => $summary,
         image         => $f->{image},
     };
 }
@@ -147,7 +160,7 @@ sub fetch_feed {
             $body = $e->content()->body();
         }
 
-        my $title  = to_chars($e->title());
+        my $title  = to_chars($e->title()) // '';   # some entries have no title
         my $author = to_chars(eval { $e->author() });
         $body      = to_chars($body);
 
@@ -289,7 +302,7 @@ sub to_chars {
 sub strip_html {
     my ($s) = @_;
     return '' if ! defined $s;
-    $s =~ s/<[^>]+>//g; 
+    $s =~ s/<[^>]+>//g;
     decode_entities($s);
     $s = clean_text($s);
     $s =~ s/^.*?\bposted (?:a photo|a video|photos):\s*//i;
@@ -308,7 +321,7 @@ sub truncate_text {
     my ($s, $max) = @_;
     return $s if ! $max || length($s) <= $max;
     my $cut = substr($s, 0, $max);
-    $cut =~ s/\s+\S*$//; 
+    $cut =~ s/\s+\S*$//;
     return "$cut\x{2026}";
 }
 
