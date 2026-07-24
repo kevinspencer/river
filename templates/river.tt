@@ -70,7 +70,10 @@
   .body .title a { color: var(--ink); text-decoration: none; }
   .body .title a:hover { color: var(--link); text-decoration: underline; }
   .body .summary { font-size: 14px; color: #3f4652; margin: 3px 0 0; }
-  .body time { display: block; font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 5px; }
+  .body .thumb-link { display: inline-block; margin-top: 8px; }
+  .body .thumb { display: block; width: 100%; max-width: 220px; height: auto;
+                 border-radius: 6px; border: 1px solid var(--hair); }
+  .body time { display: block; font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 6px; }
 
   .empty { color: var(--muted); font-style: italic; padding: 24px 0; }
 
@@ -101,6 +104,7 @@
             [% ELSE %][% it.title | html %][% END %]
           </p>
           [% IF it.summary %]<p class="summary">[% it.summary | html %]</p>[% END %]
+          [% IF it.image %]<a class="thumb-link" href="[% it.url | html %]"><img class="thumb" src="[% it.image | html %]" alt="" loading="lazy"></a>[% END %]
           <time datetime="[% it.datetime %]" title="[% it.fulldate %]">[% it.when %]</time>
         </div>
       </article>

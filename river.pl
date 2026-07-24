@@ -120,6 +120,7 @@ sub normalize_item {
         url           => $f->{url} // '',
         ts            => $f->{ts} + 0,
         summary       => truncate_text(strip_html($f->{summary} // ''), $SUMMARY_LEN),
+        image         => $f->{image},
     };
 }
 
@@ -153,11 +154,15 @@ sub fetch_feed {
         # don't leak username in the post title
         $title =~ s/^\Q$author\E\s+// if defined $author && length $author;
 
+        # first embedded image = a thumbnail (Flickr photos, Letterboxd posters).
+        my $image = $body =~ /<img\b[^>]*\bsrc="([^"]+)"/i ? $1 : undef;
+
         push(@items, normalize_item($src, {
             title   => $title,
             url     => $e->link(),
             ts      => $date ? $date->epoch() : undef,
             summary => $body,
+            image   => $image,
         }));
     }
     return \@items;
@@ -284,9 +289,13 @@ sub to_chars {
 sub strip_html {
     my ($s) = @_;
     return '' if ! defined $s;
-    $s =~ s/<[^>]+>//g;
-    decode_entities($s);
-    return clean_text($s);
+    $s =~ s/<[^>]+>//g;        # drop real tags first
+    decode_entities($s);       # then decode ALL entities (named + numeric) to chars
+    $s = clean_text($s);
+    # Flickr feed content leads with "<name> posted a photo:" — drop that preamble
+    # so the summary shows the actual description (or nothing) instead.
+    $s =~ s/^.*?\bposted (?:a photo|a video|photos):\s*//i;
+    return $s;
 }
 
 sub clean_text {
@@ -301,8 +310,8 @@ sub truncate_text {
     my ($s, $max) = @_;
     return $s if ! $max || length($s) <= $max;
     my $cut = substr($s, 0, $max);
-    $cut =~ s/\s+\S*$//; 
-    return "$cut\x{2026}";
+    $cut =~ s/\s+\S*$//;   # don't slice a word in half
+    return "$cut\x{2026}"; # …
 }
 
 sub relative_time {
