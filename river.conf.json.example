@@ -14,7 +14,8 @@
     {
       "name": "Flickr",
       "type": "feed",
-      "url": "https://www.flickr.com/services/feeds/photos_public.gne?id=YOUR_NSID&format=atom"
+      "url": "https://www.flickr.com/services/feeds/photos_public.gne?id=YOUR_NSID&format=atom",
+      "thumbnail": true
     },
     {
       "name": "Pinboard",
