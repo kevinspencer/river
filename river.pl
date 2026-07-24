@@ -13,6 +13,7 @@ use MIME::Base64 qw(encode_base64);
 use URI::Escape qw(uri_escape);
 use POSIX qw(strftime);
 use HTML::Entities qw(decode_entities);
+use Encode qw(decode);
 use Template;
 use XML::Feed;
 use strict;
@@ -123,7 +124,6 @@ sub normalize_item {
 }
 
 
-# Generic RSS/Atom via XML::Feed (auto-detects the format; dates come back as
 # Generic RSS/Atom, covers Flickr, Pinboard, Letterboxd, GitHub, blogs, etc.
 sub fetch_feed {
     my ($src) = @_;
@@ -146,9 +146,11 @@ sub fetch_feed {
             $body = $e->content()->body();
         }
 
+        my $title  = to_chars($e->title());
+        my $author = to_chars(eval { $e->author() });
+        $body      = to_chars($body);
+
         # don't leak username in the post title
-        my $title  = $e->title() // '';
-        my $author = eval { $e->author() };
         $title =~ s/^\Q$author\E\s+// if defined $author && length $author;
 
         push(@items, normalize_item($src, {
@@ -273,11 +275,17 @@ sub cap_newest {
     return [ @sorted[0 .. $limit - 1] ];
 }
 
+sub to_chars {
+    my ($s) = @_;
+    return $s if ! defined $s || utf8::is_utf8($s);
+    return decode('UTF-8', $s);
+}
+
 sub strip_html {
     my ($s) = @_;
     return '' if ! defined $s;
-    $s =~ s/<[^>]+>//g;        # drop real tags first
-    decode_entities($s);       # then decode ALL entities (named + numeric) to chars
+    $s =~ s/<[^>]+>//g;
+    decode_entities($s);
     return clean_text($s);
 }
 
@@ -293,8 +301,8 @@ sub truncate_text {
     my ($s, $max) = @_;
     return $s if ! $max || length($s) <= $max;
     my $cut = substr($s, 0, $max);
-    $cut =~ s/\s+\S*$//;   # don't slice a word in half
-    return "$cut\x{2026}"; # …
+    $cut =~ s/\s+\S*$//; 
+    return "$cut\x{2026}";
 }
 
 sub relative_time {
