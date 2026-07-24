@@ -1,0 +1,50 @@
+{
+
+  // ---- Global settings ----
+  "title": "The Endless River",
+  "output_file": "/path-to/the-file/river.html
+  "template": "templates/river.tt",
+  "cache_dir": "cache",
+  "max_items": 100,
+  "per_source_limit": 25,
+  "http_timeout": 20, 
+  "summary_length": 280,
+
+  "sources": [
+    {
+      "name": "Flickr",
+      "type": "feed",
+      "url": "https://www.flickr.com/services/feeds/photos_public.gne?id=YOUR_NSID&format=atom"
+    },
+    {
+      "name": "Pinboard",
+      "type": "feed",
+      "url": "https://feeds.pinboard.in/rss/u:YOUR_USERNAME/"
+    },
+    {
+      "name": "Letterboxd",
+      "type": "feed",
+      "url": "https://letterboxd.com/YOUR_USERNAME/rss/"
+    },
+    {
+      "name": "GitHub",
+      "type": "feed",
+      "url": "https://github.com/YOUR_USERNAME.atom"
+    },
+    {
+      "name": "Last.fm",
+      "type": "lastfm",
+      "user": "YOUR_USERNAME",
+      "api_key": "YOUR_LASTFM_API_KEY",   // https://www.last.fm/api/account/create
+      "limit": 25
+    },
+    {
+      "name": "Spotify",
+      "type": "spotify",
+      "client_id": "YOUR_SPOTIFY_CLIENT_ID",
+      "client_secret": "YOUR_SPOTIFY_CLIENT_SECRET",
+      "refresh_token": "YOUR_SPOTIFY_REFRESH_TOKEN",  // needs scope: user-read-recently-played
+      "limit": 25
+    }
+  ]
+}
