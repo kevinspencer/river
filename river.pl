@@ -1,6 +1,6 @@
 #!/usr/bin/env perl
 
-# river
+# river, the endless river
 
 use Getopt::Long;
 use FindBin;
@@ -12,6 +12,7 @@ use HTTP::Date qw(str2time);
 use MIME::Base64 qw(encode_base64);
 use URI::Escape qw(uri_escape);
 use POSIX qw(strftime);
+use HTML::Entities qw(decode_entities);
 use Template;
 use XML::Feed;
 use strict;
@@ -80,8 +81,6 @@ render(\@all);
 printf("Wrote %d item(s) to %s\n", scalar(@all), $cfg->{output_file});
 exit(0);
 
-# ---------------------------------------------------------------------------
-
 sub load_config {
     my ($path) = @_;
     open(my $fh, '<', $path)
@@ -103,7 +102,6 @@ sub ua {
     return $agent;
 }
 
-# A normalized item, or undef if it has no timestamp (can't sit on the timeline).
 sub normalize_item {
     my ($src, $f) = @_;
     return undef if ! defined $f->{ts} || $f->{ts} !~ /^\d+$/;
@@ -111,17 +109,22 @@ sub normalize_item {
     (my $class = lc($src->{name})) =~ s/[^a-z0-9]+/-/g;
     $class =~ s/^-+|-+$//g;
 
+    my $title = $f->{title} // '';
+    decode_entities($title);
+
     return {
         service       => $src->{label} // $src->{name},
         service_class => $class,
-        title         => clean_text($f->{title} // ''),
+        title         => clean_text($title),
         url           => $f->{url} // '',
         ts            => $f->{ts} + 0,
         summary       => truncate_text(strip_html($f->{summary} // ''), $SUMMARY_LEN),
     };
 }
 
-# RSS/Atom feeds - covers Flickr, Pinboard, Letterboxd, GitHub, blogs, etc.
+
+# Generic RSS/Atom via XML::Feed (auto-detects the format; dates come back as
+# Generic RSS/Atom, covers Flickr, Pinboard, Letterboxd, GitHub, blogs, etc.
 sub fetch_feed {
     my ($src) = @_;
     my $res = ua()->get($src->{url});
@@ -134,11 +137,22 @@ sub fetch_feed {
     my @items;
     for my $e ($feed->entries()) {
         my $date = $e->issued() || $e->modified();
-        my $body = $e->summary() ? $e->summary()->body()
-                 : $e->content() ? $e->content()->body()
-                 : '';
+
+        my $body = '';
+        if ($e->summary() && length($e->summary()->body() // '')) {
+            $body = $e->summary()->body();
+        }
+        elsif ($e->content() && length($e->content()->body() // '')) {
+            $body = $e->content()->body();
+        }
+
+        # don't leak username in the post title
+        my $title  = $e->title() // '';
+        my $author = eval { $e->author() };
+        $title =~ s/^\Q$author\E\s+// if defined $author && length $author;
+
         push(@items, normalize_item($src, {
-            title   => $e->title(),
+            title   => $title,
             url     => $e->link(),
             ts      => $date ? $date->epoch() : undef,
             summary => $body,
@@ -177,7 +191,8 @@ sub fetch_lastfm {
     return \@items;
 }
 
-# Spotify 
+# Spotify recently-played via OAuth (refresh-token grant, same flow as
+# lastfm-spotify-compare). Requires the user-read-recently-played scope.
 sub fetch_spotify {
     my ($src) = @_;
     my $limit = $src->{limit} // 25;
@@ -261,13 +276,8 @@ sub cap_newest {
 sub strip_html {
     my ($s) = @_;
     return '' if ! defined $s;
-    $s =~ s/<[^>]+>//g;
-    $s =~ s/&(?:amp|#38);/&/g;
-    $s =~ s/&(?:lt|#60);/</g;
-    $s =~ s/&(?:gt|#62);/>/g;
-    $s =~ s/&(?:quot|#34);/"/g;
-    $s =~ s/&(?:#39|apos);/'/g;
-    $s =~ s/&nbsp;/ /g;
+    $s =~ s/<[^>]+>//g;        # drop real tags first
+    decode_entities($s);       # then decode ALL entities (named + numeric) to chars
     return clean_text($s);
 }
 
@@ -283,8 +293,8 @@ sub truncate_text {
     my ($s, $max) = @_;
     return $s if ! $max || length($s) <= $max;
     my $cut = substr($s, 0, $max);
-    $cut =~ s/\s+\S*$//;  
-    return "$cut\x{2026}";
+    $cut =~ s/\s+\S*$//;   # don't slice a word in half
+    return "$cut\x{2026}"; # …
 }
 
 sub relative_time {
