@@ -31,6 +31,8 @@
   .wppb-title       { text-decoration: none !important; }
   html:not(.dark) .wppb-title { color: #222 !important; }
 
+  /* river: the per-service favicon sits inline before each title (like linkblog's
+     Font Awesome icon), plus the optional Flickr thumbnail under the item. */
   .river-favicon {
     display: inline-block;
     width: 24px; height: 24px;
@@ -48,6 +50,8 @@
     /* left-align even if the theme centers content images */
     margin: 6px auto 0 0 !important;
   }
+  /* GitHub & Pinboard favicons are dark and get lost on the dark theme — render
+     them as a white silhouette when dark mode is active. */
   html.dark .river-favicon.svc-github,
   html.dark .river-favicon.svc-pinboard {
     filter: brightness(0) invert(1);
@@ -69,12 +73,13 @@
 		</div>
 
 		<div id="brand">
-			<span><h1 class="site-title"><a href="https://kevinspencer.org" title="kevin spencer" rel="home">kevin spencer</a> <span><?php require 'slug.php' ?></span></h1>
+			<span><h1 class="site-title"><a href="https://kevinspencer.org" title="kevin spencer" rel="home">kevin spencer</a></h1></span>
 		</div><!-- /brand -->
 
 		<nav role="navigation" class="site-navigation main-navigation">
 			<div class="menu"><ul>
 				<li class="page_item"><a href="https://kevinspencer.org/posts/">posts</a></li>
+				<li class="page_item"><a href="https://kevinspencer.org/river/">river</a></li>
 				<li class="page_item"><a href="https://kevinspencer.org/linkblog/">linkblog</a></li>
 				<li class="page_item"><a href="https://kevinspencer.org/photography/">photography</a></li>
 				<li class="page_item"><a href="https://kevinspencer.org/about">about</a></li>
