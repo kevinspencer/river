@@ -133,8 +133,6 @@ sub normalize_item {
 
     my $summary = truncate_text(strip_html($f->{summary} // ''), $SUMMARY_LEN);
 
-    # Some feeds (WordPress asides/status posts) have no title — fall back to the
-    # body text so the item still reads, or a placeholder if it's truly empty.
     if ($title eq '') {
         if ($summary ne '') {
             $title   = truncate_text($summary, 120);
@@ -200,59 +198,78 @@ sub fetch_feed {
     return \@items;
 }
 
-# Last.fm recent tracks via the JSON API (its per-user RSS feeds were retired).
+# Last.fm via the JSON API (its per-user RSS feeds were retired). Rather than every
+# scrobble, we log two things: each loved ("faved") track, and the single most
+# recent scrobble.
 sub fetch_lastfm {
     my ($src) = @_;
-    my $limit = $src->{limit} // 25;
-    my $url   = 'https://ws.audioscrobbler.com/2.0/'
-              . '?method=user.getrecenttracks'
-              . '&user='    . uri_escape($src->{user})
-              . '&api_key=' . uri_escape($src->{api_key})
-              . '&format=json&limit=' . $limit;
-
-    my $res = ua()->get($url);
-    die("HTTP " . $res->status_line() . "\n") if ! $res->is_success();
-
-    my $data = decode_json($res->decoded_content());
-    die("API error $data->{error}: $data->{message}\n") if $data->{error};
-
     my @items;
-    for my $t (@{ $data->{recenttracks}{track} || [] }) {
-        # The currently-playing track has no date; skip it (nothing to sort by).
+
+    my $loved = lastfm_call($src, 'user.getlovedtracks', $src->{loved_limit} // $src->{limit} // 25);
+    for my $t (@{ $loved->{lovedtracks}{track} || [] }) {
+        my $artist = ref $t->{artist} eq 'HASH'
+                   ? ($t->{artist}{name} // $t->{artist}{'#text'})
+                   : $t->{artist};
+        push(@items, normalize_item($src, {
+            title   => "$artist \x{2013} $t->{name}",
+            url     => $t->{url},
+            ts      => $t->{date}{uts},
+            summary => "\x{2764} Loved on Last.fm",
+        }));
+    }
+
+    my $recent = lastfm_call($src, 'user.getrecenttracks', 2);
+    for my $t (@{ $recent->{recenttracks}{track} || [] }) {
         next if ref $t->{'@attr'} eq 'HASH' && $t->{'@attr'}{nowplaying};
         my $artist = ref $t->{artist} eq 'HASH' ? $t->{artist}{'#text'} : $t->{artist};
         push(@items, normalize_item($src, {
-            title => "$artist \x{2013} $t->{name}",
-            url   => $t->{url},
-            ts    => $t->{date}{uts},
+            title   => "$artist \x{2013} $t->{name}",
+            url     => $t->{url},
+            ts      => $t->{date}{uts},
+            summary => "\x{266A} Last scrobble",
         }));
+        last;
     }
+
     return \@items;
 }
 
-# Spotify recently-played via OAuth (refresh-token grant, same flow as
-# lastfm-spotify-compare). Requires the user-read-recently-played scope.
+sub lastfm_call {
+    my ($src, $method, $limit) = @_;
+    my $url = 'https://ws.audioscrobbler.com/2.0/'
+            . '?method='  . $method
+            . '&user='    . uri_escape($src->{user})
+            . '&api_key=' . uri_escape($src->{api_key})
+            . '&format=json&limit=' . $limit;
+    my $res = ua()->get($url);
+    die("HTTP " . $res->status_line() . "\n") if ! $res->is_success();
+    my $data = decode_json($res->decoded_content());
+    die("API error $data->{error}: $data->{message}\n") if $data->{error};
+    return $data;
+}
+
 sub fetch_spotify {
     my ($src) = @_;
     my $limit = $src->{limit} // 25;
     my $token = spotify_access_token($src);
 
     my $res = ua()->get(
-        "https://api.spotify.com/v1/me/player/recently-played?limit=$limit",
+        "https://api.spotify.com/v1/me/tracks?limit=$limit",
         Authorization => "Bearer $token",
     );
     die("HTTP " . $res->status_line() . "\n") if ! $res->is_success();
 
     my $data = decode_json($res->decoded_content());
     my @items;
-    for my $play (@{ $data->{items} || [] }) {
-        my $t = $play->{track} or next;
+    for my $it (@{ $data->{items} || [] }) {
+        my $t = $it->{track} or next;
         my $artist = join(', ', map { $_->{name} } @{ $t->{artists} || [] });
-        (my $played = $play->{played_at}) =~ s/\.\d+//;   # drop fractional seconds
+        (my $added = $it->{added_at}) =~ s/\.\d+//;   # ISO8601 -> epoch
         push(@items, normalize_item($src, {
-            title => "$artist \x{2013} $t->{name}",
-            url   => $t->{external_urls}{spotify},
-            ts    => str2time($played),
+            title   => "$artist \x{2013} $t->{name}",
+            url     => $t->{external_urls}{spotify},
+            ts      => str2time($added),
+            summary => "\x{2764} Added to Liked Songs",
         }));
     }
     return \@items;
