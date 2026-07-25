@@ -1,121 +1,147 @@
 <!doctype html>
-<html lang="en">
+<html lang="en-US">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>[% title | html %]</title>
+
+<link rel="alternate" type="application/rss+xml" title="kevin spencer &raquo; Feed" href="https://kevinspencer.org/posts/feed/" />
+
+<!-- Same theme + plugin CSS as the linkblog page (served from kevinspencer.org) -->
+<link rel="stylesheet" href="https://kevinspencer.org/posts/wp-content/plugins/wp-pinboard/css/style.css" type="text/css" media="all" />
+<link rel="stylesheet" href="https://kevinspencer.org/posts/wp-content/themes/Less/style.css" type="text/css" media="all" />
+<link rel="stylesheet" href="https://kevinspencer.org/posts/wp-content/themes/Less/dark.css" type="text/css" media="all" />
+<script src="https://kit.fontawesome.com/448d243a91.js" crossorigin="anonymous"></script>
+
+<script>
+  // Prevent the theme from flickering on load (same behaviour as linkblog).
+  (function() {
+    const theme = localStorage.getItem('theme');
+    if (theme !== 'light') {
+      document.documentElement.classList.add('dark');
+    }
+  })();
+</script>
+
 <style>
-  :root {
-    --ink: #1a1d24;
-    --muted: #6b7280;
-    --hair: #e6e8ec;
-    --ground: #fbfbfa;
-    --card: #ffffff;
-    --link: #2f5d8c;
-    --flickr: #ff0084;
-    --last-fm: #d51007;
-    --pinboard: #0000e6;
-    --letterboxd: #00b020;
-    --spotify: #1db954;
-    --github: #24292f;
-    --accent: #6b7280;
-    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* linkblog's wppb overrides */
+  .wppb-bookmark    { margin-bottom: 1em; }
+  .wppb-header      { margin-bottom: 0.3em; }
+  .wppb-description { margin-bottom: 0.3em; }
+  .wppb-title       { text-decoration: none !important; }
+  html:not(.dark) .wppb-title { color: #222 !important; }
+
+  .river-favicon {
+    display: inline-block;
+    width: 24px; height: 24px;
+    vertical-align: -6px;
+    margin-right: 8px;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    border-radius: 4px;
   }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--ground);
-    color: var(--ink);
-    font-family: var(--sans);
-    line-height: 1.5;
+  .river-thumb {
+    display: block;
+    max-width: 220px; height: auto;
+    border-radius: 6px;
+    /* left-align even if the theme centers content images */
+    margin: 6px auto 0 0 !important;
   }
-  .wrap { max-width: 680px; margin: 0 auto; padding: 40px 20px 72px; }
-
-  header.masthead { margin-bottom: 28px; }
-  h1 { font-size: 26px; letter-spacing: -0.02em; margin: 0 0 4px; }
-  .masthead .meta { font-family: var(--mono); font-size: 12px; color: var(--muted); }
-
-  .stream { display: flex; flex-direction: column; gap: 2px; }
-
-  .item {
-    display: grid;
-    grid-template-columns: 92px 1fr;
-    gap: 14px;
-    padding: 14px 0;
-    border-top: 1px solid var(--hair);
+  html.dark .river-favicon.svc-github,
+  html.dark .river-favicon.svc-pinboard {
+    filter: brightness(0) invert(1);
   }
-  .item:first-child { border-top: none; }
-
-  .badge {
-    justify-self: start;
-    align-self: start;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    color: #fff;
-    background: var(--accent);
-    border-radius: 5px;
-    padding: 3px 8px;
-    white-space: nowrap;
-  }
-  .badge.flickr     { background: var(--flickr); }
-  .badge.last-fm    { background: var(--last-fm); }
-  .badge.pinboard   { background: var(--pinboard); }
-  .badge.letterboxd { background: var(--letterboxd); }
-  .badge.spotify    { background: var(--spotify); }
-  .badge.github     { background: var(--github); }
-
-  .body .title { font-size: 15.5px; font-weight: 600; margin: 0; }
-  .body .title a { color: var(--ink); text-decoration: none; }
-  .body .title a:hover { color: var(--link); text-decoration: underline; }
-  .body .summary { font-size: 14px; color: #3f4652; margin: 3px 0 0; }
-  .body .thumb-link { display: inline-block; margin-top: 8px; }
-  .body .thumb { display: block; width: 100%; max-width: 220px; height: auto;
-                 border-radius: 6px; border: 1px solid var(--hair); }
-  .body time { display: block; font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 6px; }
-
-  .empty { color: var(--muted); font-style: italic; padding: 24px 0; }
-
-  footer.foot { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--hair);
-                font-family: var(--mono); font-size: 12px; color: var(--muted); }
-
-  @media (max-width: 480px) {
-    .item { grid-template-columns: 1fr; gap: 6px; }
-  }
+[% FOREACH s IN service_icons -%]
+  .river-favicon.svc-[% s.class %] { background-image: url([% s.data %]); }
+[% END -%]
 </style>
+
 </head>
+
 <body>
-  <div class="wrap">
 
-    <header class="masthead">
-      <h1>[% title | html %]</h1>
-      <div class="meta">[% count %] entries &middot; updated [% generated_at %]</div>
-    </header>
+<header id="masthead" class="site-header" role="banner">
+	<div class="container">
 
-    <main class="stream">
-    [% IF items.size %]
-      [% FOREACH it IN items %]
-      <article class="item">
-        <span class="badge [% it.service_class %]">[% it.service | html %]</span>
-        <div class="body">
-          <p class="title">
-            [% IF it.url %]<a href="[% it.url | html %]">[% it.title | html %]</a>
-            [% ELSE %][% it.title | html %][% END %]
-          </p>
-          [% IF it.summary %]<p class="summary">[% it.summary | html %]</p>[% END %]
-          [% IF it.image %]<a class="thumb-link" href="[% it.url | html %]"><img class="thumb" src="[% it.image | html %]" alt="" loading="lazy"></a>[% END %]
-          <time datetime="[% it.datetime %]" title="[% it.fulldate %]">[% it.when %]</time>
-        </div>
-      </article>
-      [% END %]
-    [% ELSE %]
-      <p class="empty">No recent activity.</p>
-    [% END %]
-    </main>
+		<div class="gravatar">
+			<img alt='' src='https://secure.gravatar.com/avatar/ea536388aafad2d72f3cc0deb19a1a56?s=100&amp;d=retro&amp;r=x' class='avatar avatar-100 photo' height='100' width='100' loading='lazy'/>
+		</div>
 
-    <footer class="foot">Generated by river.pl</footer>
+		<div id="brand">
+			<span><h1 class="site-title"><a href="https://kevinspencer.org" title="kevin spencer" rel="home">kevin spencer</a> <span><?php require 'slug.php' ?></span></h1>
+		</div><!-- /brand -->
 
-  </div>
+		<nav role="navigation" class="site-navigation main-navigation">
+			<div class="menu"><ul>
+				<li class="page_item"><a href="https://kevinspencer.org/posts/">posts</a></li>
+				<li class="page_item"><a href="https://kevinspencer.org/linkblog/">linkblog</a></li>
+				<li class="page_item"><a href="https://kevinspencer.org/photography/">photography</a></li>
+				<li class="page_item"><a href="https://kevinspencer.org/about">about</a></li>
+			</ul></div>
+		</nav><!-- .site-navigation .main-navigation -->
+
+		<div class="clear"></div>
+	</div><!--/container -->
+
+</header><!-- #masthead .site-header -->
+
+<div class="container">
+	<div id="primary">
+		<div id="content" role="main">
+			<article class="post">
+				<div class="the-content">
+
+					<p><center><span style="color: #787878;">what i&rsquo;ve been up to around the web</span></center></p>
+
+					<ul style="list-style-type: none;" class="wppb-bookmarks">
+					[% FOREACH it IN items %]
+						<li class="wppb-bookmark">
+							<div class="wppb-header"><a class="wppb-title" href="[% it.url | html %]"><span class="river-favicon svc-[% it.service_class %]" title="[% it.service | html %]"></span>[% it.title | html %]</a></div>
+							[% IF it.summary %]<div class="wppb-description">[% it.summary | html %]</div>[% END %]
+							[% IF it.image %]<div class="wppb-description"><a href="[% it.url | html %]"><img class="river-thumb" src="[% it.image %]" alt="" loading="lazy"></a></div>[% END %]
+							<div class="wppb-footer">
+								<i class="fa fa-clock-o" aria-hidden="true"></i>
+								<abbr class="wppb-date" title="[% it.fulldate %]">[% it.when %]</abbr>
+							</div>
+						</li>
+					[% END %]
+					</ul>
+
+					<p><center><span style="color: #787878; font-size: 13px;">auto generated by <a href="https://github.com/kevinspencer/river">river</a> [% generated_at %].</span></center></p>
+
+				</div><!-- the-content -->
+			</article>
+		</div><!-- #content -->
+	</div><!-- #primary -->
+</div><!-- /container -->
+
+<footer>
+	<div class="site-info container">
+		<a href="https://flickr.com/photos/vek/" title="me on flickr"><i class="fa-brands fa-flickr fa-xl"></i></a>&nbsp;&nbsp;
+		<a href="https://github.com/kevinspencer" title="me on github"><i class="fa-brands fa-github fa-xl"></i></a>&nbsp;&nbsp;
+		<a href="https://www.last.fm/user/kevinspencer" title="me on last.fm"><i class="fa-brands fa-lastfm fa-xl"></i></a>&nbsp;&nbsp;
+		<a href="https://pinboard.in/u:kevinspencer" title="me on pinboard"><i class="fa fa-thumb-tack fa-xl"></i></a>&nbsp;&nbsp;
+		<a href="https://letterboxd.com/kevinspencer/" title="me on letterboxd"><i class="fa-brands fa-letterboxd"></i></a>&nbsp;&nbsp;
+		<a href="https://kevinspencer.org/posts/feed/" title="rss feed"><i class="fa fa-rss fa-xl"></i></a>
+		<br>
+		made by me in sandland
+	</div>
+</footer>
+
+<button id="theme-toggle" aria-label="Toggle dark mode">
+  <span class="svg-container">
+    <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" fill="currentColor" viewBox="0 0 30 30" aria-hidden="true" style="display:none" class="theme-icon light-icon">
+      <path d="M13.636 5.455V0h2.727v5.455ZM22.7 9.2l-1.87-1.87 3.818-3.92 1.909 1.943Zm1.841 7.159v-2.727H30v2.727ZM13.636 30v-5.455h2.727V30ZM7.3 9.136 3.414 5.352l1.943-1.909L9.2 7.3Zm17.318 17.455-3.784-3.92 1.841-1.841 3.886 3.75ZM0 16.364v-2.727h5.455v2.727Zm5.352 10.227-1.909-1.943 3.818-3.818.989.92.989.955ZM15 23.182a7.9 7.9 0 0 1-5.8-2.386 7.9 7.9 0 0 1-2.386-5.8 7.9 7.9 0 0 1 2.386-5.8A7.9 7.9 0 0 1 15 6.81a7.9 7.9 0 0 1 5.8 2.386 7.9 7.9 0 0 1 2.386 5.8 7.9 7.9 0 0 1-2.386 5.8 7.9 7.9 0 0 1-5.8 2.386m0-2.727a5.25 5.25 0 0 0 3.852-1.6 5.25 5.25 0 0 0 1.6-3.852 5.25 5.25 0 0 0-1.6-3.852A5.25 5.25 0 0 0 15 9.551a5.25 5.25 0 0 0-3.852 1.6 5.25 5.25 0 0 0-1.6 3.852 5.25 5.25 0 0 0 1.6 3.852 5.25 5.25 0 0 0 3.852 1.6M15 15"></path>
+    </svg>
+    <svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" fill="currentColor" viewBox="0 0 30 30" aria-hidden="true" style="display:block" class="theme-icon dark-icon">
+      <path d="M15.15 30a14.6 14.6 0 0 1-5.906-1.2 15.4 15.4 0 0 1-4.8-3.244 15.4 15.4 0 0 1-3.244-4.8A14.6 14.6 0 0 1 0 14.85a14.63 14.63 0 0 1 3.488-9.656A14.78 14.78 0 0 1 12.375 0a15.15 15.15 0 0 0 .413 7.256 14.8 14.8 0 0 0 3.75 6.206 14.8 14.8 0 0 0 6.206 3.75 15.15 15.15 0 0 0 7.256.412 14.57 14.57 0 0 1-5.175 8.888A14.7 14.7 0 0 1 15.15 30m0-3a11.87 11.87 0 0 0 6.113-1.65 11.87 11.87 0 0 0 4.425-4.537 18.6 18.6 0 0 1-6.113-1.631 17.8 17.8 0 0 1-5.175-3.619 18.1 18.1 0 0 1-3.637-5.175A17.7 17.7 0 0 1 9.15 4.276 11.7 11.7 0 0 0 4.631 8.72 12.07 12.07 0 0 0 3 14.85a11.72 11.72 0 0 0 3.544 8.606A11.72 11.72 0 0 0 15.15 27m-.75-11.437"></path>
+    </svg>
+  </span>
+</button>
+
+<script src="https://kevinspencer.org/posts/wp-content/themes/Less/theme-toggle.js"></script>
+<script src="https://kevinspencer.org/posts/wp-includes/js/jquery/jquery.min.js"></script>
+<script src="https://kevinspencer.org/posts/wp-content/themes/Less/js/theme.min.js"></script>
 </body>
 </html>

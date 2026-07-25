@@ -38,7 +38,18 @@ my %FETCHERS = (
     spotify => \&fetch_spotify,
 );
 
+my %BUILTIN_ICON_DOMAIN = (
+    'flickr'     => 'flickr.com',
+    'last.fm'    => 'last.fm',
+    'lastfm'     => 'last.fm',
+    'pinboard'   => 'pinboard.in',
+    'letterboxd' => 'letterboxd.com',
+    'spotify'    => 'spotify.com',
+    'github'     => 'github.com',
+);
+
 my @all;
+my %icon_for;   # service_class => data: URI (or undef if none)
 for my $src (@{ $cfg->{sources} || [] }) {
     next if exists $src->{enabled} && ! $src->{enabled};
 
@@ -65,6 +76,9 @@ for my $src (@{ $cfg->{sources} || [] }) {
             if @$items;
     }
     push(@all, @$items);
+
+    my $class = service_class($src->{name});
+    $icon_for{$class} = get_icon($src) if ! exists $icon_for{$class};
 }
 
 # Merge: newest first, then truncate to the global cap.
@@ -78,7 +92,10 @@ for my $it (@all) {
     $it->{fulldate} = strftime('%a %d %b %Y, %H:%M', localtime($it->{ts}));
 }
 
-render(\@all);
+my @service_icons = map { { class => $_, data => $icon_for{$_} } }
+                    grep { defined $icon_for{$_} } sort keys %icon_for;
+
+render(\@all, \@service_icons);
 printf("Wrote %d item(s) to %s\n", scalar(@all), $cfg->{output_file});
 exit(0);
 
@@ -116,6 +133,8 @@ sub normalize_item {
 
     my $summary = truncate_text(strip_html($f->{summary} // ''), $SUMMARY_LEN);
 
+    # Some feeds (WordPress asides/status posts) have no title — fall back to the
+    # body text so the item still reads, or a placeholder if it's truly empty.
     if ($title eq '') {
         if ($summary ne '') {
             $title   = truncate_text($summary, 120);
@@ -341,7 +360,7 @@ sub relative_time {
 }
 
 sub render {
-    my ($items) = @_;
+    my ($items, $service_icons) = @_;
     my $template = $cfg->{template} // 'templates/river.tt';
     $template = "$FindBin::Bin/$template" if $template !~ m{^/};
 
@@ -351,10 +370,11 @@ sub render {
     }) or die(Template->error() . "\n");
 
     my $vars = {
-        title        => $cfg->{title} // 'Activity Stream',
-        items        => $items,
-        generated_at => strftime('%a %d %b %Y, %H:%M %Z', localtime()),
-        count        => scalar(@$items),
+        title         => $cfg->{title} // 'Activity Stream',
+        items         => $items,
+        service_icons => $service_icons || [],
+        generated_at  => strftime('%a %d %b %Y, %H:%M %Z', localtime()),
+        count         => scalar(@$items),
     };
 
     my $out;
@@ -365,4 +385,64 @@ sub render {
         or die("Cannot write output '$cfg->{output_file}': $!\n");
     print $fh $out;
     close($fh);
+}
+
+sub service_class {
+    my ($name) = @_;
+    (my $c = lc($name // '')) =~ s/[^a-z0-9]+/-/g;
+    $c =~ s/^-+|-+$//g;
+    return $c;
+}
+
+sub icon_domain {
+    my ($src) = @_;
+    return $src->{icon_domain} if $src->{icon_domain};
+    my $key = lc($src->{name} // '');
+    return $BUILTIN_ICON_DOMAIN{$key} if $BUILTIN_ICON_DOMAIN{$key};
+    if (($src->{url} // '') =~ m{^https?://([^/]+)}i) {
+        (my $host = $1) =~ s/^www\.//i;
+        return $host;
+    }
+    return undef;
+}
+
+sub get_icon {
+    my ($src) = @_;
+    my ($dir) = cache_path($src);
+    my $class = service_class($src->{name});
+    my $file  = $dir ? "$dir/icon-$class.txt" : undef;
+
+    return read_icon_cache($file)
+        if $file && -e $file && -M $file < 30;
+
+    my $url = $src->{icon};
+    if (! $url) {
+        my $domain = icon_domain($src) or return read_icon_cache($file);
+        $url = "https://icons.duckduckgo.com/ip3/$domain.ico";
+    }
+
+    my $res = ua()->get($url);
+    return read_icon_cache($file) if ! $res->is_success();
+
+    my $bytes = $res->content();
+    return read_icon_cache($file) if ! length $bytes;
+
+    (my $ctype = $res->header('Content-Type') || 'image/x-icon') =~ s/\s*;.*//;
+    my $data = "data:$ctype;base64," . encode_base64($bytes, '');
+
+    if ($file) {
+        make_path($dir) if ! -d $dir;
+        if (open(my $fh, '>', $file)) { print $fh $data; close($fh); }
+    }
+    return $data;
+}
+
+sub read_icon_cache {
+    my ($file) = @_;
+    return undef if ! $file || ! -e $file;
+    open(my $fh, '<', $file) or return undef;
+    local $/;
+    my $data = <$fh>;
+    close($fh);
+    return $data || undef;
 }
