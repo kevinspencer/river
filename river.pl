@@ -131,7 +131,10 @@ sub normalize_item {
     decode_entities($title);
     $title = clean_text($title);
 
-    my $summary = truncate_text(strip_html($f->{summary} // ''), $SUMMARY_LEN);
+    my $summary = strip_html($f->{summary} // '');
+    $summary =~ s/^\Q$f->{strip_prefix}\E\s+//
+        if defined $f->{strip_prefix} && length $f->{strip_prefix};
+    $summary = truncate_text($summary, $SUMMARY_LEN);
 
     if ($title eq '') {
         if ($summary ne '') {
@@ -188,11 +191,12 @@ sub fetch_feed {
         $image = $1 if $src->{thumbnail} && $body =~ /<img\b[^>]*\bsrc="([^"]+)"/i;
 
         push(@items, normalize_item($src, {
-            title   => $title,
-            url     => $e->link(),
-            ts      => $date ? $date->epoch() : undef,
-            summary => $body,
-            image   => $image,
+            title        => $title,
+            url          => $e->link(),
+            ts           => $date ? $date->epoch() : undef,
+            summary      => $body,
+            image        => $image,
+            strip_prefix => $author,
         }));
     }
     return \@items;
