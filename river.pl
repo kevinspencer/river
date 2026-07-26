@@ -254,6 +254,22 @@ sub fetch_lastfm {
     my $limit  = $src->{limit} // $PER_SOURCE // 50;
     my @loves  = grep { ($_->{summary} // '') =~ /\x{2764}/ } @merged;
     my @plays  = grep { ($_->{summary} // '') !~ /\x{2764}/ } @merged;
+
+    # Optional time bucketing: keep at most one scrobble per N-hour window, keyed
+    # on the absolute epoch bucket (floor(ts / window)). Because buckets are fixed
+    # points on the clock — not relative to run time — the spacing is identical no
+    # matter how often the script runs. @plays is already newest-first, so the most
+    # recent play in each window wins.
+    if (my $hours = $src->{scrobble_bucket_hours}) {
+        my $window = $hours * 3600;
+        my (%bucket_seen, @thinned);
+        for my $p (@plays) {
+            next if $bucket_seen{ int($p->{ts} / $window) }++;
+            push(@thinned, $p);
+        }
+        @plays = @thinned;
+    }
+
     @loves = @loves[0 .. $limit - 1] if @loves > $limit;
     my $room = $limit - @loves;
     @plays = $room > 0 ? @plays[0 .. $room - 1] : () if @plays > $room;
