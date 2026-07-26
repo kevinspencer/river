@@ -38,6 +38,7 @@
       "api_key": "YOUR_LASTFM_API_KEY",
       "loved_limit": 25,
       "scrobble_limit": 8,
+      "scrobble_bucket_hours": 4,
       "limit": 50
     },
     {
