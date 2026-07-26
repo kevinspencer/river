@@ -203,18 +203,21 @@ sub fetch_feed {
 }
 
 # Last.fm via the JSON API (its per-user RSS feeds were retired). Rather than every
-# scrobble, we log two things: each loved ("faved") track, and the single most
-# recent scrobble.
+# scrobble, we log two things: each loved ("faved") track, and recent scrobbles as
+# an accumulating history — each run's fresh scrobbles are merged with the prior
+# cache and deduped by play-time, so plays that age out of the fetch window persist
+# rather than vanishing (turns a single churning entry into a real timeline).
 sub fetch_lastfm {
     my ($src) = @_;
-    my @items;
+    my @fresh;
 
-    my $loved = lastfm_call($src, 'user.getlovedtracks', $src->{loved_limit} // $src->{limit} // 25);
+    # Loved tracks — one item per love, timestamped when loved.
+    my $loved = lastfm_call($src, 'user.getlovedtracks', $src->{loved_limit} // 25);
     for my $t (@{ $loved->{lovedtracks}{track} || [] }) {
         my $artist = ref $t->{artist} eq 'HASH'
                    ? ($t->{artist}{name} // $t->{artist}{'#text'})
                    : $t->{artist};
-        push(@items, normalize_item($src, {
+        push(@fresh, normalize_item($src, {
             title   => "$artist \x{2013} $t->{name}",
             url     => $t->{url},
             ts      => $t->{date}{uts},
@@ -222,20 +225,41 @@ sub fetch_lastfm {
         }));
     }
 
-    my $recent = lastfm_call($src, 'user.getrecenttracks', 2);
+    # Recent scrobbles — the last N plays (skip a now-playing track: no date).
+    my $recent = lastfm_call($src, 'user.getrecenttracks', $src->{scrobble_limit} // 8);
     for my $t (@{ $recent->{recenttracks}{track} || [] }) {
         next if ref $t->{'@attr'} eq 'HASH' && $t->{'@attr'}{nowplaying};
         my $artist = ref $t->{artist} eq 'HASH' ? $t->{artist}{'#text'} : $t->{artist};
-        push(@items, normalize_item($src, {
+        push(@fresh, normalize_item($src, {
             title   => "$artist \x{2013} $t->{name}",
             url     => $t->{url},
             ts      => $t->{date}{uts},
-            summary => "\x{266A} Last scrobble",
+            summary => "\x{266A} Scrobbled on Last.fm",
         }));
-        last;
     }
 
-    return \@items;
+    # Merge fresh items with the previously cached history, newest first, deduped
+    # by event marker + play-time + title (so scrobbles that aged out of the fetch
+    # window persist, and overlapping windows don't double up).
+    my (@merged, %seen);
+    for my $it (grep { defined } @fresh, @{ read_cache($src) || [] }) {
+        my $key = ($it->{summary} // '') . '|' . $it->{ts} . '|' . ($it->{title} // '');
+        next if $seen{$key}++;
+        push(@merged, $it);
+    }
+    @merged = sort { $b->{ts} <=> $a->{ts} } @merged;
+
+    # Bound the retained set, but reserve the loves first so a burst of scrobbles
+    # can never evict them; fill the remaining slots with the newest scrobbles.
+    my $limit  = $src->{limit} // $PER_SOURCE // 50;
+    my @loves  = grep { ($_->{summary} // '') =~ /\x{2764}/ } @merged;
+    my @plays  = grep { ($_->{summary} // '') !~ /\x{2764}/ } @merged;
+    @loves = @loves[0 .. $limit - 1] if @loves > $limit;
+    my $room = $limit - @loves;
+    @plays = $room > 0 ? @plays[0 .. $room - 1] : () if @plays > $room;
+
+    my @final = sort { $b->{ts} <=> $a->{ts} } (@loves, @plays);
+    return \@final;
 }
 
 sub lastfm_call {
