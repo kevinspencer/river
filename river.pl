@@ -33,9 +33,10 @@ my $MAX_ITEMS    = $cfg->{max_items}      // 100;
 my $PER_SOURCE   = $cfg->{per_source_limit};
 
 my %FETCHERS = (
-    feed    => \&fetch_feed,
-    lastfm  => \&fetch_lastfm,
-    spotify => \&fetch_spotify,
+    feed      => \&fetch_feed,
+    lastfm    => \&fetch_lastfm,
+    spotify   => \&fetch_spotify,
+    goodreads => \&fetch_goodreads,
 );
 
 my %BUILTIN_ICON_DOMAIN = (
@@ -46,6 +47,7 @@ my %BUILTIN_ICON_DOMAIN = (
     'letterboxd' => 'letterboxd.com',
     'spotify'    => 'spotify.com',
     'github'     => 'github.com',
+    'goodreads'  => 'goodreads.com',
 );
 
 my @all;
@@ -202,16 +204,87 @@ sub fetch_feed {
     return \@items;
 }
 
+# Goodreads per-shelf RSS (their API is dead; RSS lives on). One source per shelf +
+# event: "started" (currently-reading shelf) and "finished" (read shelf). The generic
+# feed parser buries the book under a noisy "author:.. rating:.. shelves:.." blob, so
+# we read the item elements directly for a clean "Title \x{2014} Author \x{2605}\x{2605}\x{2605}\x{2606}\x{2606}". And — like
+# Last.fm we ACCUMULATE + dedupe against the cache so a "started" event survives
+# after the book moves off the currently-reading shelf.
+sub fetch_goodreads {
+    my ($src) = @_;
+    my $res = ua()->get($src->{url});
+    die("HTTP " . $res->status_line() . "\n") if ! $res->is_success();
+    my $xml = $res->decoded_content();
+
+    my $event  = $src->{event} // 'update';
+    my %marker = (
+        started  => "\x{1F4D6} Started reading",   # book
+        finished => "\x{2705} Finished reading",    # check mark
+        update   => 'Goodreads',
+    );
+
+    my @fresh;
+    while ($xml =~ m{<item>(.*?)</item>}gs) {
+        my $item = $1;
+        my $tag = sub {
+            my ($t) = @_;
+            return undef if $item !~ m{<\Q$t\E>\s*(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?\s*</\Q$t\E>}s;
+            my $v = $1;
+            decode_entities($v);
+            $v =~ s/^\s+|\s+$//g;
+            return $v;
+        };
+
+        my $book = $tag->('title');
+        next if ! defined $book || $book eq '';
+        my $author = $tag->('author_name');
+        my $rating = $tag->('user_rating') // 0;
+
+        my $title = $book;
+        $title .= " \x{2014} $author" if defined $author && length $author;
+
+        # Only "finished" carries a rating (you rate a book after reading it).
+        my $summary = $marker{$event} // 'Goodreads';
+        if ($event eq 'finished' && $rating =~ /^[1-5]$/) {
+            $summary .= '  ' . ("\x{2605}" x $rating) . ("\x{2606}" x (5 - $rating));
+        }
+
+        # Finished date: prefer the user's "read at", else the shelf-add date.
+        my $when = ($event eq 'finished' && $tag->('user_read_at'))
+                 ? $tag->('user_read_at')
+                 : $tag->('pubDate');
+
+        push(@fresh, normalize_item($src, {
+            title   => $title,
+            url     => $tag->('link'),
+            ts      => $when ? str2time($when) : undef,
+            summary => $summary,
+        }));
+    }
+
+    # Accumulate: merge with the cache, dedupe by title (stable per book within a
+    # shelf/event source), newest first, bounded by the source limit.
+    my (@merged, %seen);
+    for my $it (grep { defined } @fresh, @{ read_cache($src) || [] }) {
+        next if $seen{ $it->{title} // '' }++;
+        push(@merged, $it);
+    }
+    @merged = sort { $b->{ts} <=> $a->{ts} } @merged;
+    my $limit = $src->{limit} // $PER_SOURCE // 50;
+    @merged = @merged[0 .. $limit - 1] if @merged > $limit;
+    return \@merged;
+}
+
 # Last.fm via the JSON API (its per-user RSS feeds were retired). Rather than every
 # scrobble, we log two things: each loved ("faved") track, and recent scrobbles as
-# an accumulating history — each run's fresh scrobbles are merged with the prior
+# an accumulating history each run's fresh scrobbles are merged with the prior
 # cache and deduped by play-time, so plays that age out of the fetch window persist
 # rather than vanishing (turns a single churning entry into a real timeline).
 sub fetch_lastfm {
     my ($src) = @_;
     my @fresh;
 
-    # Loved tracks — one item per love, timestamped when loved.
+    # Loved tracks one item per love, timestamped when loved.
     my $loved = lastfm_call($src, 'user.getlovedtracks', $src->{loved_limit} // 25);
     for my $t (@{ $loved->{lovedtracks}{track} || [] }) {
         my $artist = ref $t->{artist} eq 'HASH'
@@ -225,7 +298,7 @@ sub fetch_lastfm {
         }));
     }
 
-    # Recent scrobbles — the last N plays (skip a now-playing track: no date).
+    # Recent scrobbles the last N plays (skip a now-playing track: no date).
     my $recent = lastfm_call($src, 'user.getrecenttracks', $src->{scrobble_limit} // 8);
     for my $t (@{ $recent->{recenttracks}{track} || [] }) {
         next if ref $t->{'@attr'} eq 'HASH' && $t->{'@attr'}{nowplaying};
@@ -257,7 +330,7 @@ sub fetch_lastfm {
 
     # Optional time bucketing: keep at most one scrobble per N-hour window, keyed
     # on the absolute epoch bucket (floor(ts / window)). Because buckets are fixed
-    # points on the clock — not relative to run time — the spacing is identical no
+    # points on the clock not relative to run time the spacing is identical no
     # matter how often the script runs. @plays is already newest-first, so the most
     # recent play in each window wins.
     if (my $hours = $src->{scrobble_bucket_hours}) {
@@ -341,6 +414,9 @@ sub cache_path {
     $dir = "$FindBin::Bin/$dir" if $dir !~ m{^/};
     (my $name = lc($src->{name})) =~ s/[^a-z0-9]+/-/g;
     $name =~ s/^-+|-+$//g;
+    # Sources can share a name (e.g. two Goodreads shelves both labelled
+    # "Goodreads"); the event keeps their item caches from colliding.
+    $name .= '-' . lc($src->{event}) if $src->{event};
     return ($dir, "$dir/$name.json");
 }
 

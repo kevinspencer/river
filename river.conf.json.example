@@ -48,6 +48,18 @@
       "client_secret": "YOUR_SPOTIFY_CLIENT_SECRET",
       "refresh_token": "YOUR_SPOTIFY_REFRESH_TOKEN",  // needs scope: user-library-read
       "limit": 25
+    },
+    {
+      "name": "Goodreads",
+      "type": "goodreads",
+      "event": "started",
+      "url": "https://www.goodreads.com/review/list_rss/YOUR_ID?shelf=currently-reading"
+    },
+    {
+      "name": "Goodreads",
+      "type": "goodreads",
+      "event": "finished",
+      "url": "https://www.goodreads.com/review/list_rss/YOUR_ID?shelf=read"
     }
   ]
 }
