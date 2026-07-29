@@ -73,7 +73,7 @@
 		</div>
 
 		<div id="brand">
-			<span><h1 class="site-title"><a href="https://kevinspencer.org" title="kevin spencer" rel="home">kevin spencer</a></h1></span>
+			<span><h1 class="site-title"><a href="https://kevinspencer.org" title="kevin spencer" rel="home">kevin spencer</a> <span><?php require 'slug.php' ?></span></h1></span>
 		</div><!-- /brand -->
 
 		<nav role="navigation" class="site-navigation main-navigation">
