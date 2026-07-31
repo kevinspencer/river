@@ -50,6 +50,10 @@
     /* left-align even if the theme centers content images */
     margin: 6px auto 0 0 !important;
   }
+  /* Caption icon (e.g. Flickr's camera): white on the dark theme (the default
+     view); follows the text colour in light mode so it never disappears. */
+  .river-caption-icon { margin-right: 5px; color: inherit; }
+  html.dark .river-caption-icon { color: #fff; }
   /* GitHub & Pinboard favicons are dark and get lost on the dark theme — render
      them as a white silhouette when dark mode is active. */
   html.dark .river-favicon.svc-github,
@@ -103,7 +107,7 @@
 					[% FOREACH it IN items %]
 						<li class="wppb-bookmark">
 							<div class="wppb-header"><a class="wppb-title" href="[% it.url | html %]"><span class="river-favicon svc-[% it.service_class %]" title="[% it.service | html %]"></span>[% it.title | html %]</a></div>
-							[% IF it.summary %]<div class="wppb-description">[% it.summary | html %]</div>[% END %]
+							[% IF it.summary %]<div class="wppb-description">[% IF it.caption_icon %]<i class="river-caption-icon [% it.caption_icon | html %]"></i>[% END %][% it.summary | html %]</div>[% END %]
 							[% IF it.image %]<div class="wppb-description"><a href="[% it.url | html %]"><img class="river-thumb" src="[% it.image %]" alt="" loading="lazy"></a></div>[% END %]
 							<div class="wppb-footer">
 								<i class="fa fa-clock-o" aria-hidden="true"></i>

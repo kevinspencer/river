@@ -14,7 +14,9 @@
       "name": "Flickr",
       "type": "feed",
       "url": "https://www.flickr.com/services/feeds/photos_public.gne?id=YOUR_NSID&format=atom",
-      "thumbnail": true
+      "thumbnail": true,
+      "caption": "uploaded to Flickr",
+      "caption_icon": "fa-solid fa-camera"
     },
     {
       "name": "Pinboard",

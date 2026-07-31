@@ -159,6 +159,8 @@ sub normalize_item {
         ts            => $f->{ts} + 0,
         summary       => $summary,
         image         => $f->{image},
+        # optional Font Awesome class rendered as an <i> before the caption
+        caption_icon  => $src->{caption_icon},
     };
 }
 
