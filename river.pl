@@ -148,6 +148,9 @@ sub normalize_item {
         }
     }
 
+    # a fixed per-source caption replaces the feed's own description,
+    $summary = $src->{caption} if defined $src->{caption} && length $src->{caption};
+
     return {
         service       => $src->{label} // $src->{name},
         service_class => $class,
@@ -208,7 +211,7 @@ sub fetch_feed {
 # event: "started" (currently-reading shelf) and "finished" (read shelf). The generic
 # feed parser buries the book under a noisy "author:.. rating:.. shelves:.." blob, so
 # we read the item elements directly for a clean "Title \x{2014} Author \x{2605}\x{2605}\x{2605}\x{2606}\x{2606}". And — like
-# Last.fm we ACCUMULATE + dedupe against the cache so a "started" event survives
+# Last.fm — we ACCUMULATE + dedupe against the cache so a "started" event survives
 # after the book moves off the currently-reading shelf.
 sub fetch_goodreads {
     my ($src) = @_;
@@ -277,14 +280,14 @@ sub fetch_goodreads {
 
 # Last.fm via the JSON API (its per-user RSS feeds were retired). Rather than every
 # scrobble, we log two things: each loved ("faved") track, and recent scrobbles as
-# an accumulating history each run's fresh scrobbles are merged with the prior
+# an accumulating history — each run's fresh scrobbles are merged with the prior
 # cache and deduped by play-time, so plays that age out of the fetch window persist
 # rather than vanishing (turns a single churning entry into a real timeline).
 sub fetch_lastfm {
     my ($src) = @_;
     my @fresh;
 
-    # Loved tracks one item per love, timestamped when loved.
+    # Loved tracks — one item per love, timestamped when loved.
     my $loved = lastfm_call($src, 'user.getlovedtracks', $src->{loved_limit} // 25);
     for my $t (@{ $loved->{lovedtracks}{track} || [] }) {
         my $artist = ref $t->{artist} eq 'HASH'
@@ -298,7 +301,7 @@ sub fetch_lastfm {
         }));
     }
 
-    # Recent scrobbles the last N plays (skip a now-playing track: no date).
+    # Recent scrobbles — the last N plays (skip a now-playing track: no date).
     my $recent = lastfm_call($src, 'user.getrecenttracks', $src->{scrobble_limit} // 8);
     for my $t (@{ $recent->{recenttracks}{track} || [] }) {
         next if ref $t->{'@attr'} eq 'HASH' && $t->{'@attr'}{nowplaying};
@@ -330,7 +333,7 @@ sub fetch_lastfm {
 
     # Optional time bucketing: keep at most one scrobble per N-hour window, keyed
     # on the absolute epoch bucket (floor(ts / window)). Because buckets are fixed
-    # points on the clock not relative to run time the spacing is identical no
+    # points on the clock — not relative to run time — the spacing is identical no
     # matter how often the script runs. @plays is already newest-first, so the most
     # recent play in each window wins.
     if (my $hours = $src->{scrobble_bucket_hours}) {
