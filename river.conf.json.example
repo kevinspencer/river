@@ -62,6 +62,12 @@
       "type": "goodreads",
       "event": "finished",
       "url": "https://www.goodreads.com/review/list_rss/YOUR_ID?shelf=read"
+    },
+    {
+      "name": "Simkl",
+      "type": "simkl",
+      "client_id": "YOUR_SIMKL_CLIENT_ID",
+      "access_token": "YOUR_SIMKL_ACCESS_TOKEN"
     }
   ]
 }

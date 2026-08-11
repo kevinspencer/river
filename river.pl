@@ -37,6 +37,7 @@ my %FETCHERS = (
     lastfm    => \&fetch_lastfm,
     spotify   => \&fetch_spotify,
     goodreads => \&fetch_goodreads,
+    simkl     => \&fetch_simkl,
 );
 
 my %BUILTIN_ICON_DOMAIN = (
@@ -48,6 +49,7 @@ my %BUILTIN_ICON_DOMAIN = (
     'spotify'    => 'spotify.com',
     'github'     => 'github.com',
     'goodreads'  => 'goodreads.com',
+    'simkl'      => 'simkl.com',
 );
 
 my @all;
@@ -212,7 +214,7 @@ sub fetch_feed {
 # Goodreads per-shelf RSS (their API is dead; RSS lives on). One source per shelf +
 # event: "started" (currently-reading shelf) and "finished" (read shelf). The generic
 # feed parser buries the book under a noisy "author:.. rating:.. shelves:.." blob, so
-# we read the item elements directly for a clean "Title \x{2014} Author \x{2605}\x{2605}\x{2605}\x{2606}\x{2606}". And — like
+# we read the item elements directly for a clean "Title - Author \x{2605}\x{2605}\x{2605}\x{2606}\x{2606}". And — like
 # Last.fm — we ACCUMULATE + dedupe against the cache so a "started" event survives
 # after the book moves off the currently-reading shelf.
 sub fetch_goodreads {
@@ -246,7 +248,7 @@ sub fetch_goodreads {
         my $rating = $tag->('user_rating') // 0;
 
         my $title = $book;
-        $title .= " \x{2014} $author" if defined $author && length $author;
+        $title .= " - $author" if defined $author && length $author;
 
         # Only "finished" carries a rating (you rate a book after reading it).
         my $summary = $marker{$event} // 'Goodreads';
@@ -296,7 +298,7 @@ sub fetch_lastfm {
                    ? ($t->{artist}{name} // $t->{artist}{'#text'})
                    : $t->{artist};
         push(@fresh, normalize_item($src, {
-            title   => "$artist \x{2013} $t->{name}",
+            title   => "$artist - $t->{name}",
             url     => $t->{url},
             ts      => $t->{date}{uts},
             summary => "\x{2764} Loved on Last.fm",
@@ -309,7 +311,7 @@ sub fetch_lastfm {
         next if ref $t->{'@attr'} eq 'HASH' && $t->{'@attr'}{nowplaying};
         my $artist = ref $t->{artist} eq 'HASH' ? $t->{artist}{'#text'} : $t->{artist};
         push(@fresh, normalize_item($src, {
-            title   => "$artist \x{2013} $t->{name}",
+            title   => "$artist - $t->{name}",
             url     => $t->{url},
             ts      => $t->{date}{uts},
             summary => "\x{266A} Scrobbled on Last.fm",
@@ -388,11 +390,65 @@ sub fetch_spotify {
         my $artist = join(', ', map { $_->{name} } @{ $t->{artists} || [] });
         (my $added = $it->{added_at}) =~ s/\.\d+//;   # ISO8601 -> epoch
         push(@items, normalize_item($src, {
-            title   => "$artist \x{2013} $t->{name}",
+            title   => "$artist - $t->{name}",
             url     => $t->{external_urls}{spotify},
             ts      => str2time($added),
             summary => "\x{2764} Added to Liked Songs",
         }));
+    }
+    return \@items;
+}
+
+# Simkl watched-TV via the API. `/sync/all-items/shows` returns the user's shows,
+# each carrying two timestamped events we surface: when it was added to the
+# watchlist (`added_to_watchlist_at`) and its most-recently-watched episode
+# (`last_watched` like "S02E05" + `last_watched_at`). So each show yields an
+# "added" item and — once there are watches — one "watched" item (the latest
+# episode, not a firehose). TV-only (movies are a separate endpoint), so it
+# complements Letterboxd. Auth: simkl-api-key (client_id) + Bearer access_token
+# from simkl-auth.pl (long-lived, doesn't expire).
+sub fetch_simkl {
+    my ($src) = @_;
+    my $res = ua()->get('https://api.simkl.com/sync/all-items/shows?extended=full',
+        'simkl-api-key' => $src->{client_id}    // '',
+        'Authorization' => 'Bearer ' . ($src->{access_token} // ''),
+    );
+    die("HTTP " . $res->status_line() . "\n") if ! $res->is_success();
+
+    my $data = decode_json($res->decoded_content());
+    my @items;
+    for my $s (@{ $data->{shows} || [] }) {
+        my $show  = $s->{show} or next;
+        my $title = $show->{title};
+        next if ! defined $title || $title eq '';
+
+        my $id   = $show->{ids}{simkl};
+        my $slug = $show->{ids}{slug};
+        my $link = $id
+            ? "https://simkl.com/tv/$id" . ($slug ? "/$slug" : '')
+            : 'https://simkl.com/';
+
+        # (1) added-to-watchlist event
+        if (my $added = $s->{added_to_watchlist_at}) {
+            (my $t = $added) =~ s/\.\d+//;
+            push(@items, normalize_item($src, {
+                title   => $title,
+                url     => $link,
+                ts      => str2time($t),
+                summary => "\x{2795} Added to Simkl watchlist",   # heavy plus
+            }));
+        }
+
+        # (2) watched event — the latest episode, only when there are watches
+        if ($s->{last_watched_at} && defined $s->{last_watched} && $s->{last_watched} ne '') {
+            (my $t = $s->{last_watched_at}) =~ s/\.\d+//;
+            push(@items, normalize_item($src, {
+                title   => "$title - $s->{last_watched}",   # "Silo - S02E05"
+                url     => $link,
+                ts      => str2time($t),
+                summary => "\x{1F4FA} Watched on Simkl",           # tv
+            }));
+        }
     }
     return \@items;
 }
