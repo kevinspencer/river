@@ -31,6 +31,7 @@ my $HTTP_TIMEOUT = $cfg->{http_timeout}   // 20;
 my $SUMMARY_LEN  = $cfg->{summary_length} // 280;
 my $MAX_ITEMS    = $cfg->{max_items}      // 100;
 my $PER_SOURCE   = $cfg->{per_source_limit};
+my $SOURCE_FLOOR = $cfg->{source_floor}   // 3;   # newest-N per source guaranteed a spot
 
 my %FETCHERS = (
     feed      => \&fetch_feed,
@@ -85,9 +86,26 @@ for my $src (@{ $cfg->{sources} || [] }) {
     $icon_for{$class} = get_icon($src) if ! exists $icon_for{$class};
 }
 
-# Merge: newest first, then truncate to the global cap.
+# Merge newest-first. Before applying the global cap, reserve a "floor" of the
+# newest N items from EVERY source, so a quiet source (e.g. Last.fm, whose loves
+# are timestamped months ago) can't be squeezed entirely out of the top MAX_ITEMS
+# by chattier ones. Reserved items still sort into the stream by time; the leftover
+# slots are then filled by overall recency.
 @all = sort { $b->{ts} <=> $a->{ts} } @all;
-@all = @all[0 .. $MAX_ITEMS - 1] if @all > $MAX_ITEMS;
+
+if ($SOURCE_FLOOR > 0 && @all > $MAX_ITEMS) {
+    my (%seen, @reserved, @rest);
+    for my $it (@all) {                                 # already newest-first
+        my $c = $it->{service_class} // '';
+        if (++$seen{$c} <= $SOURCE_FLOOR) { push(@reserved, $it) }
+        else                              { push(@rest,     $it) }
+    }
+    my $room = $MAX_ITEMS - @reserved;
+    @rest = $room > 0 ? @rest[0 .. $room - 1] : () if @rest > $room;
+    @all  = sort { $b->{ts} <=> $a->{ts} } (@reserved, @rest);
+}
+
+@all = @all[0 .. $MAX_ITEMS - 1] if @all > $MAX_ITEMS;   # safety cap
 
 my $now = time();
 for my $it (@all) {
@@ -212,11 +230,7 @@ sub fetch_feed {
 }
 
 # Goodreads per-shelf RSS (their API is dead; RSS lives on). One source per shelf +
-# event: "started" (currently-reading shelf) and "finished" (read shelf). The generic
-# feed parser buries the book under a noisy "author:.. rating:.. shelves:.." blob, so
-# we read the item elements directly for a clean "Title - Author \x{2605}\x{2605}\x{2605}\x{2606}\x{2606}". And — like
-# Last.fm — we ACCUMULATE + dedupe against the cache so a "started" event survives
-# after the book moves off the currently-reading shelf.
+# event: "started" (currently-reading shelf) and "finished" (read shelf).
 sub fetch_goodreads {
     my ($src) = @_;
     my $res = ua()->get($src->{url});
@@ -284,14 +298,14 @@ sub fetch_goodreads {
 
 # Last.fm via the JSON API (its per-user RSS feeds were retired). Rather than every
 # scrobble, we log two things: each loved ("faved") track, and recent scrobbles as
-# an accumulating history — each run's fresh scrobbles are merged with the prior
+# an accumulating history each run's fresh scrobbles are merged with the prior
 # cache and deduped by play-time, so plays that age out of the fetch window persist
 # rather than vanishing (turns a single churning entry into a real timeline).
 sub fetch_lastfm {
     my ($src) = @_;
     my @fresh;
 
-    # Loved tracks — one item per love, timestamped when loved.
+    # Loved tracks one item per love, timestamped when loved.
     my $loved = lastfm_call($src, 'user.getlovedtracks', $src->{loved_limit} // 25);
     for my $t (@{ $loved->{lovedtracks}{track} || [] }) {
         my $artist = ref $t->{artist} eq 'HASH'
@@ -305,7 +319,7 @@ sub fetch_lastfm {
         }));
     }
 
-    # Recent scrobbles — the last N plays (skip a now-playing track: no date).
+    # Recent scrobbles the last N plays (skip a now-playing track: no date).
     my $recent = lastfm_call($src, 'user.getrecenttracks', $src->{scrobble_limit} // 8);
     for my $t (@{ $recent->{recenttracks}{track} || [] }) {
         next if ref $t->{'@attr'} eq 'HASH' && $t->{'@attr'}{nowplaying};
@@ -337,7 +351,7 @@ sub fetch_lastfm {
 
     # Optional time bucketing: keep at most one scrobble per N-hour window, keyed
     # on the absolute epoch bucket (floor(ts / window)). Because buckets are fixed
-    # points on the clock — not relative to run time — the spacing is identical no
+    # points on the clock not relative to run time the spacing is identical no
     # matter how often the script runs. @plays is already newest-first, so the most
     # recent play in each window wins.
     if (my $hours = $src->{scrobble_bucket_hours}) {
@@ -350,7 +364,12 @@ sub fetch_lastfm {
         @plays = @thinned;
     }
 
-    @loves = @loves[0 .. $limit - 1] if @loves > $limit;
+    # Cap loves to loved_limit (NOT the full limit) so accumulated loves can never
+    # starve scrobbles: capping to $limit let loves grow to fill every slot, leaving
+    # room=0 and dropping ALL scrobbles (incl. today's). This also bounds the return
+    # to <= loved_limit loves, so the cache can't runaway-accumulate loves either.
+    my $loves_show = $src->{loved_limit} // 25;
+    @loves = @loves[0 .. $loves_show - 1] if @loves > $loves_show;
     my $room = $limit - @loves;
     @plays = $room > 0 ? @plays[0 .. $room - 1] : () if @plays > $room;
 
@@ -399,14 +418,7 @@ sub fetch_spotify {
     return \@items;
 }
 
-# Simkl watched-TV via the API. `/sync/all-items/shows` returns the user's shows,
-# each carrying two timestamped events we surface: when it was added to the
-# watchlist (`added_to_watchlist_at`) and its most-recently-watched episode
-# (`last_watched` like "S02E05" + `last_watched_at`). So each show yields an
-# "added" item and — once there are watches — one "watched" item (the latest
-# episode, not a firehose). TV-only (movies are a separate endpoint), so it
-# complements Letterboxd. Auth: simkl-api-key (client_id) + Bearer access_token
-# from simkl-auth.pl (long-lived, doesn't expire).
+# Simkl watched-TV via the API. `/sync/all-items/shows`
 sub fetch_simkl {
     my ($src) = @_;
     my $res = ua()->get('https://api.simkl.com/sync/all-items/shows?extended=full',
