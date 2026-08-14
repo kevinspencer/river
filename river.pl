@@ -428,7 +428,7 @@ sub fetch_simkl {
     die("HTTP " . $res->status_line() . "\n") if ! $res->is_success();
 
     my $data = decode_json($res->decoded_content());
-    my @items;
+    my @fresh;
     for my $s (@{ $data->{shows} || [] }) {
         my $show  = $s->{show} or next;
         my $title = $show->{title};
@@ -443,7 +443,7 @@ sub fetch_simkl {
         # (1) added-to-watchlist event
         if (my $added = $s->{added_to_watchlist_at}) {
             (my $t = $added) =~ s/\.\d+//;
-            push(@items, normalize_item($src, {
+            push(@fresh, normalize_item($src, {
                 title   => $title,
                 url     => $link,
                 ts      => str2time($t),
@@ -451,10 +451,10 @@ sub fetch_simkl {
             }));
         }
 
-        # (2) watched event — the latest episode, only when there are watches
+        # (2) watched event the latest episode, only when there are watches
         if ($s->{last_watched_at} && defined $s->{last_watched} && $s->{last_watched} ne '') {
             (my $t = $s->{last_watched_at}) =~ s/\.\d+//;
-            push(@items, normalize_item($src, {
+            push(@fresh, normalize_item($src, {
                 title   => "$title - $s->{last_watched}",   # "Silo - S02E05"
                 url     => $link,
                 ts      => str2time($t),
@@ -462,7 +462,21 @@ sub fetch_simkl {
             }));
         }
     }
-    return \@items;
+
+    # Accumulate: the Simkl API returns only current state (each show's LATEST
+    # watched episode), so a newly-watched episode would otherwise evict the prior
+    # one. Merge with the cache and dedupe by summary+title
+    my (@merged, %seen);
+    for my $it (grep { defined } @fresh, @{ read_cache($src) || [] }) {
+        my $key = ($it->{summary} // '') . '|' . ($it->{title} // '');
+        next if $seen{$key}++;
+        push(@merged, $it);
+    }
+    @merged = sort { $b->{ts} <=> $a->{ts} } @merged;
+
+    my $limit = $src->{limit} // $PER_SOURCE // 50;
+    @merged = @merged[0 .. $limit - 1] if @merged > $limit;
+    return \@merged;
 }
 
 sub spotify_access_token {
