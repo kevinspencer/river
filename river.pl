@@ -214,6 +214,12 @@ sub fetch_feed {
         # don't leak username in the post title
         $title =~ s/^\Q$author\E\s+// if defined $author && length $author;
 
+        # optional per-source title filters, matched against the cleaned-up title
+        # (GitHub's feed in particular is chatty: pushes, branch creations, PR
+        # "contributed to" noise and stars all arrive on the one feed).
+        next if defined $src->{include_title} && $title !~ /$src->{include_title}/;
+        next if defined $src->{exclude_title} && $title =~ /$src->{exclude_title}/;
+
         my $image;
         $image = $1 if $src->{thumbnail} && $body =~ /<img\b[^>]*\bsrc="([^"]+)"/i;
 

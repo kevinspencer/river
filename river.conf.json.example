@@ -31,7 +31,8 @@
     {
       "name": "GitHub",
       "type": "feed",
-      "url": "https://github.com/YOUR_USERNAME.atom"
+      "url": "https://github.com/YOUR_USERNAME.atom",
+      "include_title": "^(?:pushed|starred)\\b"
     },
     {
       "name": "Last.fm",
