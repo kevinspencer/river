@@ -415,7 +415,7 @@ sub fetch_spotify {
         my $artist = join(', ', map { $_->{name} } @{ $t->{artists} || [] });
         (my $added = $it->{added_at}) =~ s/\.\d+//;   # ISO8601 -> epoch
         push(@items, normalize_item($src, {
-            title   => "$artist - $t->{name}",
+            title   => "$artist - " . clean_track_title($t->{name}),
             url     => $t->{external_urls}{spotify},
             ts      => str2time($added),
             summary => "\x{2764} Added to Liked Songs",
@@ -564,6 +564,24 @@ sub clean_text {
     $s =~ s/\s+/ /g;
     $s =~ s/^\s+|\s+$//g;
     return $s;
+}
+
+# Spotify appends reissue cruft to track names ("Disintegration - 2010 Remaster").
+sub clean_track_title {
+    my ($title) = @_;
+    return '' if ! defined $title;
+
+    # Separator variants: dash, semicolon, slash or comma. Handles Remaster(ed),
+    $title =~ s{\s*[-;/,]\s*(?:\d{4}\s+)?(?:(?:Digital\s+)?Remaster(?:ed)?|Digital\s+Master|Edit)(?:\s+\d{4})?(?:\s+Version)?\s*$}{}i;
+
+    # Parenthesized variants, with or without a year: "(2022 Remaster)",
+    $title =~ s{\s*\((?:\d{4}\s+)?(?:Digital\s+)?Remaster(?:ed)?(?:\s+\d{4})?(?:\s+Version)?\s*\)\s*$}{}i;
+
+    # Bare version/edit/mix suffixes: "- Single Version", "- Original Mix",
+    $title =~ s{\s*-\s*(?:Original\s+)?(?:\d+["']\s+)?(?:Single\s+)?(?:Version|Edit|Mix)\s*$}{}i;
+
+    $title =~ s/\s+$//;
+    return $title;
 }
 
 sub truncate_text {
