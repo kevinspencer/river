@@ -156,6 +156,12 @@ sub normalize_item {
     my $summary = strip_html($f->{summary} // '');
     $summary =~ s/^\Q$f->{strip_prefix}\E\s+//
         if defined $f->{strip_prefix} && length $f->{strip_prefix};
+
+    if (defined $src->{strip_summary} && length $src->{strip_summary}) {
+        $summary =~ s/$src->{strip_summary}//g;
+        $summary = clean_text($summary);
+    }
+
     $summary = truncate_text($summary, $SUMMARY_LEN);
 
     if ($title eq '') {
