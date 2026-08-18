@@ -177,6 +177,13 @@ sub normalize_item {
     # a fixed per-source caption replaces the feed's own description,
     $summary = $src->{caption} if defined $src->{caption} && length $src->{caption};
 
+    # a fixed per-source label prepended to whatever description survived.
+    if (defined $src->{summary_prefix} && length $src->{summary_prefix}) {
+        my $prefix = $src->{summary_prefix};
+        (my $bare = $prefix) =~ s/\s*:\s*$//;
+        $summary = length $summary ? "$prefix $summary" : $bare;
+    }
+
     return {
         service       => $src->{label} // $src->{name},
         service_class => $class,
