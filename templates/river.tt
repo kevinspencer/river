@@ -101,7 +101,7 @@
 			<article class="post">
 				<div class="the-content">
 
-					<p><center><span style="color: #787878;">what i&rsquo;ve been up to around the web</span></center></p>
+					<p><center><span style="color: #787878;">the endless river of web activity</span></center></p>
 
 					<ul style="list-style-type: none;" class="wppb-bookmarks">
 					[% FOREACH it IN items %]
