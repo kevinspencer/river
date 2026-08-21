@@ -177,7 +177,7 @@ sub normalize_item {
     # a fixed per-source caption replaces the feed's own description,
     $summary = $src->{caption} if defined $src->{caption} && length $src->{caption};
 
-    # a fixed per-source label prepended to whatever description survived.
+    # a fixed per-source label
     if (defined $src->{summary_prefix} && length $src->{summary_prefix}) {
         my $prefix = $src->{summary_prefix};
         (my $bare = $prefix) =~ s/\s*:\s*$//;
@@ -194,6 +194,9 @@ sub normalize_item {
         image         => $f->{image},
         # optional Font Awesome class rendered as an <i> before the caption
         caption_icon  => $src->{caption_icon},
+        # optional trusted markup which REPLACES the rendered description. comes
+        # from our own config, never from a feed, so the template emits it raw
+        caption_html  => $src->{caption_html},
     };
 }
 

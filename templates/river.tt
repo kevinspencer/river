@@ -107,7 +107,7 @@
 					[% FOREACH it IN items %]
 						<li class="wppb-bookmark">
 							<div class="wppb-header"><a class="wppb-title" href="[% it.url | html %]"><span class="river-favicon svc-[% it.service_class %]" title="[% it.service | html %]"></span>[% it.title | html %]</a></div>
-							[% IF it.summary %]<div class="wppb-description">[% IF it.caption_icon %]<i class="river-caption-icon [% it.caption_icon | html %]"></i>[% END %][% it.summary | html %]</div>[% END %]
+							[% IF it.caption_html OR it.summary %]<div class="wppb-description">[% IF it.caption_icon %]<i class="river-caption-icon [% it.caption_icon | html %]"></i>[% END %][% IF it.caption_html %][% it.caption_html %][% ELSE %][% it.summary | html %][% END %]</div>[% END %]
 							[% IF it.image %]<div class="wppb-description"><a href="[% it.url | html %]"><img class="river-thumb" src="[% it.image %]" alt="" loading="lazy"></a></div>[% END %]
 							<div class="wppb-footer">
 								<i class="fa fa-clock-o" aria-hidden="true"></i>
