@@ -22,7 +22,8 @@
       "name": "Pinboard",
       "type": "feed",
       "url": "https://feeds.pinboard.in/rss/u:YOUR_USERNAME/",
-      "summary_prefix": "saved link:"
+      "caption_html": "saved to <a href='https://example.org'>example</a>",
+      "caption_icon": "fa-solid fa-bookmark"
     },
     {
       "name": "Letterboxd",
