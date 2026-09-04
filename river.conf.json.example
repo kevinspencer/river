@@ -8,6 +8,7 @@
   "per_source_limit": 25,
   "http_timeout": 20,
   "summary_length": 280,
+  "title_length": 60,
 
   "sources": [
     {
@@ -52,6 +53,15 @@
       "client_id": "YOUR_SPOTIFY_CLIENT_ID",
       "client_secret": "YOUR_SPOTIFY_CLIENT_SECRET",
       "refresh_token": "YOUR_SPOTIFY_REFRESH_TOKEN",  // needs scope: user-library-read
+      "limit": 25
+    },
+    {
+      "name": "Overcast",
+      "type": "overcast",
+      "email": "YOUR_OVERCAST_EMAIL",
+      "password": "YOUR_OVERCAST_PASSWORD",
+      "fetch_every_hours": 12,
+      // "played_only": true,   // default. Set false to also log part-listened
       "limit": 25
     },
     {
