@@ -31,6 +31,7 @@ my $cfg = load_config($config_file);
 
 my $HTTP_TIMEOUT = $cfg->{http_timeout}   // 20;
 my $SUMMARY_LEN  = $cfg->{summary_length} // 280;
+my $TITLE_LEN    = $cfg->{title_length};        # global cap; a source may override
 my $MAX_ITEMS    = $cfg->{max_items}      // 100;
 my $PER_SOURCE   = $cfg->{per_source_limit};
 my $SOURCE_FLOOR = $cfg->{source_floor}   // 3;   # newest-N per source guaranteed a spot
@@ -170,6 +171,10 @@ sub normalize_item {
     my $title = $f->{title} // '';
     decode_entities($title);
     $title = clean_text($title);
+
+    # optional cap: global "title_length" with an optional per-source override,
+    my $title_cap = exists $src->{title_length} ? $src->{title_length} : $TITLE_LEN;
+    $title = truncate_text($title, $title_cap) if $title_cap;
 
     my $summary = strip_html($f->{summary} // '');
     $summary =~ s/^\Q$f->{strip_prefix}\E\s+//
@@ -753,8 +758,8 @@ sub get_icon {
     my $res = ua()->get($url);
     return read_icon_cache($file) if ! $res->is_success();
 
-    my $bytes = $res->content();
-    return read_icon_cache($file) if ! length $bytes;
+    my $bytes = $res->decoded_content(charset => 'none');
+    return read_icon_cache($file) if ! defined $bytes || ! length $bytes;
 
     (my $ctype = $res->header('Content-Type') || 'image/x-icon') =~ s/\s*;.*//;
     my $data = "data:$ctype;base64," . encode_base64($bytes, '');
