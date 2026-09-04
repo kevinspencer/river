@@ -8,6 +8,8 @@ use File::Path qw(make_path);
 use JSON::PP;
 use LWP::UserAgent;
 use HTTP::Request::Common qw(POST);
+use HTTP::Cookies;
+use HTTP::Message;
 use HTTP::Date qw(str2time);
 use MIME::Base64 qw(encode_base64);
 use URI::Escape qw(uri_escape);
@@ -39,6 +41,7 @@ my %FETCHERS = (
     spotify   => \&fetch_spotify,
     goodreads => \&fetch_goodreads,
     simkl     => \&fetch_simkl,
+    overcast  => \&fetch_overcast,
 );
 
 my %BUILTIN_ICON_DOMAIN = (
@@ -51,6 +54,7 @@ my %BUILTIN_ICON_DOMAIN = (
     'github'     => 'github.com',
     'goodreads'  => 'goodreads.com',
     'simkl'      => 'simkl.com',
+    'overcast'   => 'overcast.fm',
 );
 
 my @all;
@@ -63,6 +67,22 @@ for my $src (@{ $cfg->{sources} || [] }) {
     if (! $fetch) {
         warn("[$src->{name}] unknown source type '$type'; skipping\n");
         next;
+    }
+
+    # Optional per-source throttle: reuse the cache instead of refetching until it
+    # is older than N hours.
+    if (my $every = $src->{fetch_every_hours}) {
+        my (undef, $file) = cache_path($src);
+        my $age = ($file && -e $file) ? (time() - (stat($file))[9]) / 3600 : undef;
+        if (defined $age && $age < $every) {
+            my $cached = read_cache($src) || [];
+            printf("[%s] %d cached item(s), %.1fh old (refetch after %sh)\n",
+                $src->{name}, scalar(@$cached), $age, $every);
+            push(@all, @$cached);
+            my $c = service_class($src->{name});
+            $icon_for{$c} = get_icon($src) if ! exists $icon_for{$c};
+            next;
+        }
     }
 
     my $items;
@@ -86,11 +106,7 @@ for my $src (@{ $cfg->{sources} || [] }) {
     $icon_for{$class} = get_icon($src) if ! exists $icon_for{$class};
 }
 
-# Merge newest-first. Before applying the global cap, reserve a "floor" of the
-# newest N items from EVERY source, so a quiet source (e.g. Last.fm, whose loves
-# are timestamped months ago) can't be squeezed entirely out of the top MAX_ITEMS
-# by chattier ones. Reserved items still sort into the stream by time; the leftover
-# slots are then filled by overall recency.
+# Merge newest-first.
 @all = sort { $b->{ts} <=> $a->{ts} } @all;
 
 if ($SOURCE_FLOOR > 0 && @all > $MAX_ITEMS) {
@@ -139,6 +155,8 @@ sub ua {
         timeout => $HTTP_TIMEOUT,
         agent   => 'river.pl/1.0 (+https://kevinspencer.org)',
     );
+    # ask for compression and let LWP inflate transparently via decoded_content.
+    $agent->default_header('Accept-Encoding' => HTTP::Message::decodable());
     return $agent;
 }
 
@@ -177,7 +195,7 @@ sub normalize_item {
     # a fixed per-source caption replaces the feed's own description,
     $summary = $src->{caption} if defined $src->{caption} && length $src->{caption};
 
-    # a fixed per-source label
+    # a fixed per-source label prepended to whatever description survived.
     if (defined $src->{summary_prefix} && length $src->{summary_prefix}) {
         my $prefix = $src->{summary_prefix};
         (my $bare = $prefix) =~ s/\s*:\s*$//;
@@ -194,8 +212,7 @@ sub normalize_item {
         image         => $f->{image},
         # optional Font Awesome class rendered as an <i> before the caption
         caption_icon  => $src->{caption_icon},
-        # optional trusted markup which REPLACES the rendered description. comes
-        # from our own config, never from a feed, so the template emits it raw
+        # optional trusted markup which REPLACES the rendered description.
         caption_html  => $src->{caption_html},
     };
 }
@@ -231,8 +248,6 @@ sub fetch_feed {
         $title =~ s/^\Q$author\E\s+// if defined $author && length $author;
 
         # optional per-source title filters, matched against the cleaned-up title
-        # (GitHub's feed in particular is chatty: pushes, branch creations, PR
-        # "contributed to" noise and stars all arrive on the one feed).
         next if defined $src->{include_title} && $title !~ /$src->{include_title}/;
         next if defined $src->{exclude_title} && $title =~ /$src->{exclude_title}/;
 
@@ -251,8 +266,7 @@ sub fetch_feed {
     return \@items;
 }
 
-# Goodreads per-shelf RSS (their API is dead; RSS lives on). One source per shelf +
-# event: "started" (currently-reading shelf) and "finished" (read shelf).
+# Goodreads per-shelf RSS
 sub fetch_goodreads {
     my ($src) = @_;
     my $res = ua()->get($src->{url});
@@ -318,11 +332,7 @@ sub fetch_goodreads {
     return \@merged;
 }
 
-# Last.fm via the JSON API (its per-user RSS feeds were retired). Rather than every
-# scrobble, we log two things: each loved ("faved") track, and recent scrobbles as
-# an accumulating history each run's fresh scrobbles are merged with the prior
-# cache and deduped by play-time, so plays that age out of the fetch window persist
-# rather than vanishing (turns a single churning entry into a real timeline).
+# Last.fm via the JSON API
 sub fetch_lastfm {
     my ($src) = @_;
     my @fresh;
@@ -355,8 +365,6 @@ sub fetch_lastfm {
     }
 
     # Merge fresh items with the previously cached history, newest first, deduped
-    # by event marker + play-time + title (so scrobbles that aged out of the fetch
-    # window persist, and overlapping windows don't double up).
     my (@merged, %seen);
     for my $it (grep { defined } @fresh, @{ read_cache($src) || [] }) {
         my $key = ($it->{summary} // '') . '|' . $it->{ts} . '|' . ($it->{title} // '');
@@ -366,16 +374,11 @@ sub fetch_lastfm {
     @merged = sort { $b->{ts} <=> $a->{ts} } @merged;
 
     # Bound the retained set, but reserve the loves first so a burst of scrobbles
-    # can never evict them; fill the remaining slots with the newest scrobbles.
     my $limit  = $src->{limit} // $PER_SOURCE // 50;
     my @loves  = grep { ($_->{summary} // '') =~ /\x{2764}/ } @merged;
     my @plays  = grep { ($_->{summary} // '') !~ /\x{2764}/ } @merged;
 
-    # Optional time bucketing: keep at most one scrobble per N-hour window, keyed
-    # on the absolute epoch bucket (floor(ts / window)). Because buckets are fixed
-    # points on the clock not relative to run time the spacing is identical no
-    # matter how often the script runs. @plays is already newest-first, so the most
-    # recent play in each window wins.
+    # Optional time bucketing: keep at most one scrobble per N-hour window
     if (my $hours = $src->{scrobble_bucket_hours}) {
         my $window = $hours * 3600;
         my (%bucket_seen, @thinned);
@@ -386,10 +389,7 @@ sub fetch_lastfm {
         @plays = @thinned;
     }
 
-    # Cap loves to loved_limit (NOT the full limit) so accumulated loves can never
-    # starve scrobbles: capping to $limit let loves grow to fill every slot, leaving
-    # room=0 and dropping ALL scrobbles (incl. today's). This also bounds the return
-    # to <= loved_limit loves, so the cache can't runaway-accumulate loves either.
+    # Cap loves to loved_limit (NOT the full limit)
     my $loves_show = $src->{loved_limit} // 25;
     @loves = @loves[0 .. $loves_show - 1] if @loves > $loves_show;
     my $room = $limit - @loves;
@@ -397,6 +397,71 @@ sub fetch_lastfm {
 
     my @final = sort { $b->{ts} <=> $a->{ts} } (@loves, @plays);
     return \@final;
+}
+
+# Overcast has no public API, but the account page offers an OPML export
+sub fetch_overcast {
+    my ($src) = @_;
+
+    for my $k (qw(email password)) {
+        die("overcast source needs '$k' in the config\n") if ! $src->{$k};
+    }
+
+    my $agent = ua();
+    $agent->cookie_jar(HTTP::Cookies->new());
+
+    # The login form is a plain POST with no CSRF token, so LWP is enough.
+    my $login = $agent->post('https://overcast.fm/login', {
+        email    => $src->{email},
+        password => $src->{password},
+        then     => 'podcasts',
+    });
+    die("login failed: HTTP " . $login->status_line() . "\n")
+        if $login->code() !~ /^3\d\d$/;
+
+    my $res = $agent->get('https://overcast.fm/account/export_opml/extended');
+    die("export failed: HTTP " . $res->status_line() . "\n") if ! $res->is_success();
+
+    my $xml = to_chars($res->decoded_content());
+    die("export returned no episodes (login may have silently failed)\n")
+        if $xml !~ /type="podcast-episode"/;
+
+    # Episodes are child outlines of their podcast's type="rss" outline
+    my $played_only = $src->{played_only} // 1;
+    my (@items, $podcast);
+    while ($xml =~ /<outline\b([^>]*)>/g) {
+        my $attr = $1;
+        my ($type) = $attr =~ /\btype="([^"]*)"/;
+        next if ! defined $type;
+
+        if ($type eq 'rss') {
+            ($podcast) = $attr =~ /\btitle="([^"]*)"/;
+            $podcast = to_chars($podcast) if defined $podcast;
+            next;
+        }
+        next if $type ne 'podcast-episode';
+
+        # played="1" marks a finished episode; a part-listened one carries only
+        # progress="<seconds>", which we do not want in the stream.
+        next if $played_only && $attr !~ /\bplayed="1"/;
+
+        my ($title) = $attr =~ /\btitle="([^"]*)"/;
+        my ($when)  = $attr =~ /\buserUpdatedDate="([^"]*)"/;
+        next if ! defined $when;    # no timestamp, nothing to place it by
+
+        my ($url) = $attr =~ /\burl="([^"]*)"/;
+        my ($oc)  = $attr =~ /\bovercastUrl="([^"]*)"/;
+
+        my $name = join(' - ', grep { defined && length } $podcast, to_chars($title));
+        push(@items, normalize_item($src, {
+            title   => $name,
+            url     => $oc || $url || '',
+            ts      => str2time($when),
+            summary => "\x{1F3A7} Listened on Overcast",
+        }));
+    }
+
+    return \@items;
 }
 
 sub lastfm_call {
