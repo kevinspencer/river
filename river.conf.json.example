@@ -55,6 +55,15 @@
       "limit": 25
     },
     {
+      "name": "Overcast",
+      "type": "overcast",
+      "email": "YOUR_OVERCAST_EMAIL",
+      "password": "YOUR_OVERCAST_PASSWORD",
+      "fetch_every_hours": 12,
+      // "played_only": true,   // default. Set false to also log part-listened
+      "limit": 25
+    },
+    {
       "name": "Goodreads",
       "type": "goodreads",
       "event": "started",
