@@ -8,6 +8,7 @@
   "per_source_limit": 25,
   "http_timeout": 20,
   "summary_length": 280,
+  "title_length": 60,
 
   "sources": [
     {
