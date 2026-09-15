@@ -537,7 +537,7 @@ sub choose_provider {
 # tmdb id -> provider name, cached on disk. Availability changes rarely, so a
 # long TTL keeps this to roughly zero requests per run
 sub tmdb_provider {
-    my ($src, $tmdb_id, $cache) = @_;
+    my ($src, $tmdb_id, $cache, $show_title) = @_;
     return undef if ! $src->{tmdb_key} || ! $tmdb_id;
 
     my $ttl = ($src->{tmdb_cache_days} // 30) * 86400;
@@ -568,7 +568,9 @@ sub tmdb_provider {
     }
 
     my $name = choose_provider(@names);
-    $cache->{$tmdb_id} = { name => $name, ts => time() };
+    # keep the show title too: cached episodes of a show that has since dropped
+    # out of the simkl response can still be matched back to a provider by name.
+    $cache->{$tmdb_id} = { name => $name, ts => time(), title => $_[3] };
     return $name;
 }
 
@@ -612,7 +614,7 @@ sub fetch_simkl {
             (my $t = $s->{last_watched_at}) =~ s/\.\d+//;
 
             # name the streaming service when we can resolve one.
-            my $where = tmdb_provider($src, $show->{ids}{tmdb}, $pcache);
+            my $where = tmdb_provider($src, $show->{ids}{tmdb}, $pcache, $title);
             my $summary = $where
                         ? "\x{1F4FA} Watched on " . $where
                         : "\x{1F4FA} Watched";
@@ -640,12 +642,34 @@ sub fetch_simkl {
     # across wording changes. (Same trap as the last.fm dashes change.)
     my $cached = read_cache($src) || [];
 
-    # Heal entries written before providers existed: drop the false "on Simkl"
-    # claim rather than leave it, and rather than clearing the cache, which would
-    # discard the accumulated episode history this source depends on.
+    # Backfill providers onto cached episodes.
+    #
+    # Simkl only ever returns each show's LATEST watched episode, so older
+    # episodes live only in the cache and are never refetched -- they would keep
+    # whatever summary they were written with. But the provider is a property of
+    # the SHOW, not the episode, so "Dept. Q - S01E07" can inherit what we
+    # resolved for "Dept. Q - S01E08". Titles are built as "<show> - S##E##",
+    # so stripping that suffix recovers the show name.
+    my %provider_for;
+    for my $e (values %$pcache) {
+        next if ! ref $e || ! defined $e->{title} || ! defined $e->{name};
+        $provider_for{ $e->{title} } = $e->{name};
+    }
+
     for my $it (@$cached) {
         next if ! defined $it->{summary};
-        $it->{summary} =~ s/^(\x{1F4FA} Watched) on Simkl$/$1/;
+        next if $it->{summary} !~ /^\x{1F4FA} Watched\b/;          # watched events only
+
+        (my $show_name = $it->{title} // '') =~ s/ - S\d+E\d+$//;
+        my $where = $provider_for{$show_name};
+
+        # with a provider, state it; without one, at least drop the false
+        # "on Simkl" claim rather than leaving it in place. Clearing the cache
+        # would also fix it but would discard the accumulated episode history
+        # this source depends on.
+        $it->{summary} = $where
+                       ? "\x{1F4FA} Watched on " . $where
+                       : "\x{1F4FA} Watched";
     }
 
     my (@merged, %seen);
