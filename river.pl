@@ -58,6 +58,31 @@ my %BUILTIN_ICON_DOMAIN = (
     'overcast'   => 'overcast.fm',
 );
 
+# Streaming-provider preference for the simkl source, most-preferred first. The
+# first regex matching any provider name wins, so a show carried by several
+# services resolves to the one actually used. TMDB names the service "Apple TV"
+# (Apple dropped the "+") and lists the same content again as "Apple TV Amazon
+# Channel" when resold through Prime, hence the negative lookahead. Ad-supported
+# tiers appear as separate entries ("Netflix Standard with Ads"), which the
+# unanchored ^Netflix rule folds into plain Netflix.
+#
+# MUST live above the main loop's exit(0): a file-scoped `my` initialisation
+# placed below it is compiled but never executed, leaving the array empty at
+# runtime so every lookup silently falls through to TMDB's own ordering. That
+# was the bug that resolved Dark Matter to Amazon Prime Video while every cache
+# entry recorded rank 9999.
+my @PROVIDER_PREFER = (
+    qr/^Apple TV\b(?!.*Channel)/i,
+    qr/^Apple TV\b.*Channel$/i,
+    qr/^Netflix/i,
+    qr/^Disney Plus$/i,
+    qr/^Max$/i,
+    qr/^Peacock/i,
+    qr/^Paramount Plus$/i,
+    qr/^Hulu$/i,
+    qr/^Amazon Prime Video$/i,
+);
+
 my @all;
 my %icon_for;   # service_class => data: URI (or undef if none)
 for my $src (@{ $cfg->{sources} || [] }) {
@@ -513,17 +538,6 @@ sub fetch_spotify {
 # Simkl watched-TV via the API. `/sync/all-items/shows`
 # Streaming-provider lookup for the simkl source.
 
-my @PROVIDER_PREFER = (
-    qr/^Apple TV\b(?!.*Channel)/i,
-    qr/^Apple TV\b.*Channel$/i,
-    qr/^Netflix/i,
-    qr/^Disney Plus$/i,
-    qr/^Max$/i,
-    qr/^Peacock/i,
-    qr/^Paramount Plus$/i,
-    qr/^Hulu$/i,
-    qr/^Amazon Prime Video$/i,
-);
 
 # Returns (name, $rank). Rank is the 1-based index of the preference rule that
 # matched, so a lower number is a better answer; 9999 means nothing matched and
