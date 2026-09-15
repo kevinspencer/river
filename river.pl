@@ -511,8 +511,72 @@ sub fetch_spotify {
 }
 
 # Simkl watched-TV via the API. `/sync/all-items/shows`
+# Streaming-provider lookup for the simkl source.
+
+my @PROVIDER_PREFER = (
+    qr/^Apple TV\b(?!.*Channel)/i,
+    qr/^Apple TV\b.*Channel$/i,
+    qr/^Netflix/i,
+    qr/^Disney Plus$/i,
+    qr/^Max$/i,
+    qr/^Peacock/i,
+    qr/^Paramount Plus$/i,
+    qr/^Hulu$/i,
+    qr/^Amazon Prime Video$/i,
+);
+
+sub choose_provider {
+    my (@names) = @_;
+    return undef if ! @names;
+    for my $want (@PROVIDER_PREFER) {
+        for my $n (@names) { return $n if $n =~ $want }
+    }
+    return $names[0];   # nothing preferred matched: keep TMDB's own order
+}
+
+# tmdb id -> provider name, cached on disk. Availability changes rarely, so a
+# long TTL keeps this to roughly zero requests per run
+sub tmdb_provider {
+    my ($src, $tmdb_id, $cache) = @_;
+    return undef if ! $src->{tmdb_key} || ! $tmdb_id;
+
+    my $ttl = ($src->{tmdb_cache_days} // 30) * 86400;
+    my $hit = $cache->{$tmdb_id};
+    return $hit->{name} if $hit && defined $hit->{ts} && (time() - $hit->{ts}) < $ttl;
+
+    my $region = $src->{tmdb_region} // 'US';
+    my $url    = "https://api.themoviedb.org/3/tv/$tmdb_id/watch/providers";
+
+    # accept either TMDB credential: a v4 read token is a JWT and travels in a
+    # header (so it cannot leak into logs); a v3 api key goes in the query.
+    my $res = ($src->{tmdb_key} =~ /^ey[\w-]*\.[\w-]+\./)
+            ? ua()->get($url, 'Authorization' => 'Bearer ' . $src->{tmdb_key})
+            : ua()->get("$url?api_key=" . uri_escape($src->{tmdb_key}));
+
+    if (! $res->is_success()) {
+        warn("[$src->{name}] tmdb providers $tmdb_id: " . $res->status_line() . "\n");
+        return $hit ? $hit->{name} : undef;    # stale is better than nothing
+    }
+
+    my $reg = eval { decode_json($res->decoded_content(charset => 'none'))->{results}{$region} };
+
+    # subscription-style access only. rent/buy are deliberately ignored
+    my (@names, %seen);
+    for my $kind (qw(flatrate free ads)) {
+        push(@names, grep { ! $seen{$_}++ }
+                     map  { $_->{provider_name} } @{ $reg->{$kind} // [] });
+    }
+
+    my $name = choose_provider(@names);
+    $cache->{$tmdb_id} = { name => $name, ts => time() };
+    return $name;
+}
+
 sub fetch_simkl {
     my ($src) = @_;
+
+    my $pcache = read_provider_cache($src);
+
     my $res = ua()->get('https://api.simkl.com/sync/all-items/shows?extended=full',
         'simkl-api-key' => $src->{client_id}    // '',
         'Authorization' => 'Bearer ' . ($src->{access_token} // ''),
@@ -546,14 +610,23 @@ sub fetch_simkl {
         # (2) watched event the latest episode, only when there are watches
         if ($s->{last_watched_at} && defined $s->{last_watched} && $s->{last_watched} ne '') {
             (my $t = $s->{last_watched_at}) =~ s/\.\d+//;
+
+            # name the streaming service when we can resolve one.
+            my $where = tmdb_provider($src, $show->{ids}{tmdb}, $pcache);
+            my $summary = $where
+                        ? "\x{1F4FA} Watched on " . $where
+                        : "\x{1F4FA} Watched";
+
             push(@fresh, normalize_item($src, {
                 title   => "$title - $s->{last_watched}",   # "Silo - S02E05"
                 url     => $link,
                 ts      => str2time($t),
-                summary => "\x{1F4FA} Watched on Simkl",           # tv
+                summary => $summary,
             }));
         }
     }
+
+    write_provider_cache($src, $pcache);
 
     # Accumulate: the Simkl API returns only current state (each show's LATEST
     # watched episode), so a newly-watched episode would otherwise evict the prior
@@ -619,6 +692,36 @@ sub read_cache {
     close($fh);
     my $items = eval { JSON::PP->new()->utf8()->decode($raw) };
     return ref $items eq 'ARRAY' ? $items : undef;
+}
+
+# The tmdb provider cache lives beside the per-source item caches but is keyed
+# by tmdb id rather than by source, so it survives a source cache being cleared.
+sub provider_cache_path {
+    my ($src) = @_;
+    my ($dir) = cache_path($src);
+    return $dir ? ($dir, "$dir/tmdb-providers.json") : (undef, undef);
+}
+
+sub read_provider_cache {
+    my ($src) = @_;
+    my (undef, $file) = provider_cache_path($src);
+    return {} if ! $file || ! -e $file;
+    open(my $fh, '<', $file) or return {};
+    local $/;
+    my $raw = <$fh>;
+    close($fh);
+    my $data = eval { JSON::PP->new()->utf8()->decode($raw) };
+    return ref $data eq 'HASH' ? $data : {};
+}
+
+sub write_provider_cache {
+    my ($src, $cache) = @_;
+    my ($dir, $file) = provider_cache_path($src);
+    return if ! $file;
+    make_path($dir) if ! -d $dir;
+    open(my $fh, '>', $file) or do { warn("provider cache '$file': $!\n"); return };
+    print $fh JSON::PP->new()->utf8()->canonical()->encode($cache);
+    close($fh);
 }
 
 sub cap_newest {
