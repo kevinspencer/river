@@ -525,13 +525,19 @@ my @PROVIDER_PREFER = (
     qr/^Amazon Prime Video$/i,
 );
 
+# Returns (name, $rank). Rank is the 1-based index of the preference rule that
+# matched, so a lower number is a better answer; 9999 means nothing matched and
+# we simply took TMDB's first entry. The caller uses the rank to refuse
+# downgrades, which is what makes a transient TMDB response harmless.
 sub choose_provider {
     my (@names) = @_;
-    return undef if ! @names;
+    return (undef, 9999) if ! @names;
+    my $rank = 0;
     for my $want (@PROVIDER_PREFER) {
-        for my $n (@names) { return $n if $n =~ $want }
+        $rank++;
+        for my $n (@names) { return ($n, $rank) if $n =~ $want }
     }
-    return $names[0];   # nothing preferred matched: keep TMDB's own order
+    return ($names[0], 9999);
 }
 
 # tmdb id -> provider name, cached on disk. Availability changes rarely, so a
@@ -567,10 +573,27 @@ sub tmdb_provider {
                      map  { $_->{provider_name} } @{ $reg->{$kind} // [] });
     }
 
-    my $name = choose_provider(@names);
+    my ($name, $rank) = choose_provider(@names);
+
+    # Refuse downgrades. TMDB's provider data is CDN-served and a response
+    # occasionally comes back missing entries; that is how Dark Matter resolved
+    # to Amazon Prime Video (rank 9) when Apple TV (rank 1) briefly vanished from
+    # the payload, and the 30-day TTL then pinned the wrong answer for a month.
+    # A worse-ranked answer never replaces a better one that is still cached --
+    # it just refreshes nothing, so the next run re-checks.
+    if ($hit && defined $hit->{rank} && $rank > $hit->{rank}) {
+        warn(sprintf("[%s] tmdb %s: ignoring downgrade %s (rank %d) -> keeping %s (rank %d)\n",
+             $src->{name}, $tmdb_id, $name // '?', $rank, $hit->{name} // '?', $hit->{rank}));
+        return $hit->{name};
+    }
+
+    # Nothing matched at all: keep it, but do not let the guess go stale for a
+    # month -- ts 0 forces a re-check next run.
+    my $ts = ($rank == 9999) ? 0 : time();
+
     # keep the show title too: cached episodes of a show that has since dropped
     # out of the simkl response can still be matched back to a provider by name.
-    $cache->{$tmdb_id} = { name => $name, ts => time(), title => $_[3] };
+    $cache->{$tmdb_id} = { name => $name, ts => $ts, rank => $rank, title => $show_title };
     return $name;
 }
 
