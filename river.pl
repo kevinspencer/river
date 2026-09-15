@@ -630,10 +630,28 @@ sub fetch_simkl {
 
     # Accumulate: the Simkl API returns only current state (each show's LATEST
     # watched episode), so a newly-watched episode would otherwise evict the prior
-    # one. Merge with the cache and dedupe by summary+title
+    # one. Merge with the cache, fresh first so a re-fetched item wins.
+    #
+    # Dedupe on the EVENT MARKER (the leading emoji) plus title, NOT on the whole
+    # summary. The summary now carries the streaming provider, so keying on it
+    # would fragment: the same episode cached as "Watched on Simkl" and refetched
+    # as "Watched on Netflix" would hash differently and appear twice. The marker
+    # alone still keeps the added/watched namespaces apart while staying stable
+    # across wording changes. (Same trap as the last.fm dashes change.)
+    my $cached = read_cache($src) || [];
+
+    # Heal entries written before providers existed: drop the false "on Simkl"
+    # claim rather than leave it, and rather than clearing the cache, which would
+    # discard the accumulated episode history this source depends on.
+    for my $it (@$cached) {
+        next if ! defined $it->{summary};
+        $it->{summary} =~ s/^(\x{1F4FA} Watched) on Simkl$/$1/;
+    }
+
     my (@merged, %seen);
-    for my $it (grep { defined } @fresh, @{ read_cache($src) || [] }) {
-        my $key = ($it->{summary} // '') . '|' . ($it->{title} // '');
+    for my $it (grep { defined } @fresh, @$cached) {
+        my $marker = substr($it->{summary} // '', 0, 1);
+        my $key    = $marker . '|' . ($it->{title} // '');
         next if $seen{$key}++;
         push(@merged, $it);
     }
