@@ -81,6 +81,8 @@
       "type": "simkl",
       "client_id": "YOUR_SIMKL_CLIENT_ID",
       "access_token": "YOUR_SIMKL_ACCESS_TOKEN"
+      "tmdb_key": "YOUR_READ_ACCESS_TOKEN",
+      "tmdb_region": "US"
     }
   ]
 }

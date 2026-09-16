@@ -58,6 +58,31 @@ my %BUILTIN_ICON_DOMAIN = (
     'overcast'   => 'overcast.fm',
 );
 
+# Streaming-provider preference for the simkl source, most-preferred first. The
+# first regex matching any provider name wins, so a show carried by several
+# services resolves to the one actually used. TMDB names the service "Apple TV"
+# (Apple dropped the "+") and lists the same content again as "Apple TV Amazon
+# Channel" when resold through Prime, hence the negative lookahead. Ad-supported
+# tiers appear as separate entries ("Netflix Standard with Ads"), which the
+# unanchored ^Netflix rule folds into plain Netflix.
+#
+# MUST live above the main loop's exit(0): a file-scoped `my` initialisation
+# placed below it is compiled but never executed, leaving the array empty at
+# runtime so every lookup silently falls through to TMDB's own ordering. That
+# was the bug that resolved Dark Matter to Amazon Prime Video while every cache
+# entry recorded rank 9999.
+my @PROVIDER_PREFER = (
+    qr/^Apple TV\b(?!.*Channel)/i,
+    qr/^Apple TV\b.*Channel$/i,
+    qr/^Netflix/i,
+    qr/^Disney Plus$/i,
+    qr/^Max$/i,
+    qr/^Peacock/i,
+    qr/^Paramount Plus$/i,
+    qr/^Hulu$/i,
+    qr/^Amazon Prime Video$/i,
+);
+
 my @all;
 my %icon_for;   # service_class => data: URI (or undef if none)
 for my $src (@{ $cfg->{sources} || [] }) {
@@ -511,8 +536,86 @@ sub fetch_spotify {
 }
 
 # Simkl watched-TV via the API. `/sync/all-items/shows`
+# Streaming-provider lookup for the simkl source.
+
+
+# Returns (name, $rank). Rank is the 1-based index of the preference rule that
+# matched, so a lower number is a better answer; 9999 means nothing matched and
+# we simply took TMDB's first entry. The caller uses the rank to refuse
+# downgrades, which is what makes a transient TMDB response harmless.
+sub choose_provider {
+    my (@names) = @_;
+    return (undef, 9999) if ! @names;
+    my $rank = 0;
+    for my $want (@PROVIDER_PREFER) {
+        $rank++;
+        for my $n (@names) { return ($n, $rank) if $n =~ $want }
+    }
+    return ($names[0], 9999);
+}
+
+# tmdb id -> provider name, cached on disk. Availability changes rarely, so a
+# long TTL keeps this to roughly zero requests per run
+sub tmdb_provider {
+    my ($src, $tmdb_id, $cache, $show_title) = @_;
+    return undef if ! $src->{tmdb_key} || ! $tmdb_id;
+
+    my $ttl = ($src->{tmdb_cache_days} // 30) * 86400;
+    my $hit = $cache->{$tmdb_id};
+    return $hit->{name} if $hit && defined $hit->{ts} && (time() - $hit->{ts}) < $ttl;
+
+    my $region = $src->{tmdb_region} // 'US';
+    my $url    = "https://api.themoviedb.org/3/tv/$tmdb_id/watch/providers";
+
+    # accept either TMDB credential: a v4 read token is a JWT and travels in a
+    # header (so it cannot leak into logs); a v3 api key goes in the query.
+    my $res = ($src->{tmdb_key} =~ /^ey[\w-]*\.[\w-]+\./)
+            ? ua()->get($url, 'Authorization' => 'Bearer ' . $src->{tmdb_key})
+            : ua()->get("$url?api_key=" . uri_escape($src->{tmdb_key}));
+
+    if (! $res->is_success()) {
+        warn("[$src->{name}] tmdb providers $tmdb_id: " . $res->status_line() . "\n");
+        return $hit ? $hit->{name} : undef;    # stale is better than nothing
+    }
+
+    my $reg = eval { decode_json($res->decoded_content(charset => 'none'))->{results}{$region} };
+
+    # subscription-style access only. rent/buy are deliberately ignored
+    my (@names, %seen);
+    for my $kind (qw(flatrate free ads)) {
+        push(@names, grep { ! $seen{$_}++ }
+                     map  { $_->{provider_name} } @{ $reg->{$kind} // [] });
+    }
+
+    my ($name, $rank) = choose_provider(@names);
+
+    # Refuse downgrades. TMDB's provider data is CDN-served and a response
+    # occasionally comes back missing entries; that is how Dark Matter resolved
+    # to Amazon Prime Video (rank 9) when Apple TV (rank 1) briefly vanished from
+    # the payload, and the 30-day TTL then pinned the wrong answer for a month.
+    # A worse-ranked answer never replaces a better one that is still cached --
+    # it just refreshes nothing, so the next run re-checks.
+    if ($hit && defined $hit->{rank} && $rank > $hit->{rank}) {
+        warn(sprintf("[%s] tmdb %s: ignoring downgrade %s (rank %d) -> keeping %s (rank %d)\n",
+             $src->{name}, $tmdb_id, $name // '?', $rank, $hit->{name} // '?', $hit->{rank}));
+        return $hit->{name};
+    }
+
+    # Nothing matched at all: keep it, but do not let the guess go stale for a
+    # month -- ts 0 forces a re-check next run.
+    my $ts = ($rank == 9999) ? 0 : time();
+
+    # keep the show title too: cached episodes of a show that has since dropped
+    # out of the simkl response can still be matched back to a provider by name.
+    $cache->{$tmdb_id} = { name => $name, ts => $ts, rank => $rank, title => $show_title };
+    return $name;
+}
+
 sub fetch_simkl {
     my ($src) = @_;
+
+    my $pcache = read_provider_cache($src);
+
     my $res = ua()->get('https://api.simkl.com/sync/all-items/shows?extended=full',
         'simkl-api-key' => $src->{client_id}    // '',
         'Authorization' => 'Bearer ' . ($src->{access_token} // ''),
@@ -546,21 +649,70 @@ sub fetch_simkl {
         # (2) watched event the latest episode, only when there are watches
         if ($s->{last_watched_at} && defined $s->{last_watched} && $s->{last_watched} ne '') {
             (my $t = $s->{last_watched_at}) =~ s/\.\d+//;
+
+            # name the streaming service when we can resolve one.
+            my $where = tmdb_provider($src, $show->{ids}{tmdb}, $pcache, $title);
+            my $summary = $where
+                        ? "\x{1F4FA} Watched on " . $where
+                        : "\x{1F4FA} Watched";
+
             push(@fresh, normalize_item($src, {
                 title   => "$title - $s->{last_watched}",   # "Silo - S02E05"
                 url     => $link,
                 ts      => str2time($t),
-                summary => "\x{1F4FA} Watched on Simkl",           # tv
+                summary => $summary,
             }));
         }
     }
 
+    write_provider_cache($src, $pcache);
+
     # Accumulate: the Simkl API returns only current state (each show's LATEST
     # watched episode), so a newly-watched episode would otherwise evict the prior
-    # one. Merge with the cache and dedupe by summary+title
+    # one. Merge with the cache, fresh first so a re-fetched item wins.
+    #
+    # Dedupe on the EVENT MARKER (the leading emoji) plus title, NOT on the whole
+    # summary. The summary now carries the streaming provider, so keying on it
+    # would fragment: the same episode cached as "Watched on Simkl" and refetched
+    # as "Watched on Netflix" would hash differently and appear twice. The marker
+    # alone still keeps the added/watched namespaces apart while staying stable
+    # across wording changes. (Same trap as the last.fm dashes change.)
+    my $cached = read_cache($src) || [];
+
+    # Backfill providers onto cached episodes.
+    #
+    # Simkl only ever returns each show's LATEST watched episode, so older
+    # episodes live only in the cache and are never refetched -- they would keep
+    # whatever summary they were written with. But the provider is a property of
+    # the SHOW, not the episode, so "Dept. Q - S01E07" can inherit what we
+    # resolved for "Dept. Q - S01E08". Titles are built as "<show> - S##E##",
+    # so stripping that suffix recovers the show name.
+    my %provider_for;
+    for my $e (values %$pcache) {
+        next if ! ref $e || ! defined $e->{title} || ! defined $e->{name};
+        $provider_for{ $e->{title} } = $e->{name};
+    }
+
+    for my $it (@$cached) {
+        next if ! defined $it->{summary};
+        next if $it->{summary} !~ /^\x{1F4FA} Watched\b/;          # watched events only
+
+        (my $show_name = $it->{title} // '') =~ s/ - S\d+E\d+$//;
+        my $where = $provider_for{$show_name};
+
+        # with a provider, state it; without one, at least drop the false
+        # "on Simkl" claim rather than leaving it in place. Clearing the cache
+        # would also fix it but would discard the accumulated episode history
+        # this source depends on.
+        $it->{summary} = $where
+                       ? "\x{1F4FA} Watched on " . $where
+                       : "\x{1F4FA} Watched";
+    }
+
     my (@merged, %seen);
-    for my $it (grep { defined } @fresh, @{ read_cache($src) || [] }) {
-        my $key = ($it->{summary} // '') . '|' . ($it->{title} // '');
+    for my $it (grep { defined } @fresh, @$cached) {
+        my $marker = substr($it->{summary} // '', 0, 1);
+        my $key    = $marker . '|' . ($it->{title} // '');
         next if $seen{$key}++;
         push(@merged, $it);
     }
@@ -619,6 +771,36 @@ sub read_cache {
     close($fh);
     my $items = eval { JSON::PP->new()->utf8()->decode($raw) };
     return ref $items eq 'ARRAY' ? $items : undef;
+}
+
+# The tmdb provider cache lives beside the per-source item caches but is keyed
+# by tmdb id rather than by source, so it survives a source cache being cleared.
+sub provider_cache_path {
+    my ($src) = @_;
+    my ($dir) = cache_path($src);
+    return $dir ? ($dir, "$dir/tmdb-providers.json") : (undef, undef);
+}
+
+sub read_provider_cache {
+    my ($src) = @_;
+    my (undef, $file) = provider_cache_path($src);
+    return {} if ! $file || ! -e $file;
+    open(my $fh, '<', $file) or return {};
+    local $/;
+    my $raw = <$fh>;
+    close($fh);
+    my $data = eval { JSON::PP->new()->utf8()->decode($raw) };
+    return ref $data eq 'HASH' ? $data : {};
+}
+
+sub write_provider_cache {
+    my ($src, $cache) = @_;
+    my ($dir, $file) = provider_cache_path($src);
+    return if ! $file;
+    make_path($dir) if ! -d $dir;
+    open(my $fh, '>', $file) or do { warn("provider cache '$file': $!\n"); return };
+    print $fh JSON::PP->new()->utf8()->canonical()->encode($cache);
+    close($fh);
 }
 
 sub cap_newest {
