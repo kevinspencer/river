@@ -183,6 +183,10 @@ sub ua {
     );
     # ask for compression and let LWP inflate transparently via decoded_content.
     $agent->default_header('Accept-Encoding' => HTTP::Message::decodable());
+    # Net::HTTP rejects any header line over 8KB, and GitHub's
+    # Content-Security-Policy header alone is ~9KB.
+    no warnings 'once';
+    @LWP::Protocol::http::EXTRA_SOCK_OPTS = (MaxLineLength => 64 * 1024);
     return $agent;
 }
 
@@ -277,8 +281,13 @@ sub fetch_feed {
         # don't leak username in the post title
         $title =~ s/^\Q$author\E\s+// if defined $author && length $author;
 
-        # optional per-source title filters, matched against the cleaned-up title
-        next if defined $src->{include_title} && $title !~ /$src->{include_title}/;
+        # optional per-source filters: an entry is kept if it matches either
+        # include_title (cleaned-up title) or include_summary (plain-text body)
+        if (defined $src->{include_title} || defined $src->{include_summary}) {
+            my $keep = (defined $src->{include_title}   && $title =~ /$src->{include_title}/)
+                    || (defined $src->{include_summary} && strip_html($body) =~ /$src->{include_summary}/);
+            next if ! $keep;
+        }
         next if defined $src->{exclude_title} && $title =~ /$src->{exclude_title}/;
 
         my $image;
@@ -734,7 +743,8 @@ sub spotify_access_token {
             refresh_token => $src->{refresh_token},
         },
     ));
-    die("token HTTP " . $res->status_line() . "\n") if ! $res->is_success();
+    # the body says why, e.g. {"error":"invalid_grant","error_description":"Refresh token revoked"}
+    die("token HTTP " . $res->status_line() . ' ' . $res->decoded_content() . "\n") if ! $res->is_success();
     my $data = decode_json($res->decoded_content());
     return $data->{access_token} || die("no access_token in Spotify response\n");
 }
