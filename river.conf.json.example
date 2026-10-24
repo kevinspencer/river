@@ -35,7 +35,9 @@
       "name": "GitHub",
       "type": "feed",
       "url": "https://github.com/YOUR_USERNAME.atom",
-      "include_title": "^(?:pushed|starred)\\b"
+      "include_title": "^(?:pushed|starred)\\b",
+      "include_summary": "refs/heads/main\\b",
+      "strip_summary": "\\s*[^\\w\\s]?\\s*[A-Z][a-z]+ \\d{1,2}, \\d{4} \\d{2}:\\d{2}"
     },
     {
       "name": "Last.fm",
