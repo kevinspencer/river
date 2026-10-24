@@ -290,6 +290,16 @@ sub fetch_feed {
         }
         next if defined $src->{exclude_title} && $title =~ /$src->{exclude_title}/;
 
+        # optional rewrite rules: the first whose "match" hits the plain-text body
+        # replaces the title and/or summary, with $1..$9 filled from its captures
+        for my $rule (@{ $src->{rewrite} || [] }) {
+            my @caps = strip_html($body) =~ /$rule->{match}/ or next;
+            my $fill = sub { (my $s = shift) =~ s/\$(\d)/$caps[$1 - 1] \/\/ ''/ge; return $s };
+            $title = $fill->($rule->{title})   if defined $rule->{title};
+            $body  = $fill->($rule->{summary}) if defined $rule->{summary};
+            last;
+        }
+
         my $image;
         $image = $1 if $src->{thumbnail} && $body =~ /<img\b[^>]*\bsrc="([^"]+)"/i;
 
