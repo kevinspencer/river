@@ -131,7 +131,8 @@
 		<a href="https://github.com/kevinspencer" title="me on github"><i class="fa-brands fa-github fa-xl"></i></a>&nbsp;&nbsp;
 		<a href="https://www.last.fm/user/kevinspencer" title="me on last.fm"><i class="fa-brands fa-lastfm fa-xl"></i></a>&nbsp;&nbsp;
 		<a href="https://pinboard.in/u:kevinspencer" title="me on pinboard"><i class="fa fa-thumb-tack fa-xl"></i></a>&nbsp;&nbsp;
-		<a href="https://letterboxd.com/kevinspencer/" title="me on letterboxd"><i class="fa-brands fa-letterboxd"></i></a>&nbsp;&nbsp;
+		<a href="https://letterboxd.com/kevinspencer/" title="me on letterboxd"><i class="fa-brands fa-letterboxd fa-xl"></i></a>&nbsp;&nbsp;
+		<a rel="me" href="https://tooting.ch/@kevin" title="me on mastodon"><i class="fa-brands fa-mastodon fa-xl"></i></a>&nbsp;&nbsp;
 		<a href="https://kevinspencer.org/posts/feed/" title="rss feed"><i class="fa fa-rss fa-xl"></i></a>
 		<br>
 		made by me in sandland
